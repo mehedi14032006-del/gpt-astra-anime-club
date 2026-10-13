@@ -21,7 +21,47 @@ function LoadingState() {
   )
 }
 
-export default function PremiumVideoPlayer({ videoId, onUpgrade }) {
+function UpgradeOverlay({ title, thumbnailUrl, onUpgrade }) {
+  return (
+    <section
+      aria-labelledby="premium-upgrade-title"
+      className="relative flex min-h-[24rem] items-center justify-center overflow-hidden rounded-2xl border border-violet-200/15 bg-[#100d19] px-6 py-12 text-center text-violet-50 shadow-2xl shadow-violet-950/30 sm:min-h-[32rem]"
+    >
+      {thumbnailUrl && (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 size-full object-cover opacity-30"
+          src={thumbnailUrl}
+        />
+      )}
+      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-[#100d19]/90 via-[#100d19]/80 to-violet-950/80" />
+      <div className="relative z-10 max-w-xl">
+        <span className="inline-flex items-center gap-2 rounded-full border border-violet-200/20 bg-violet-200/10 px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-violet-200">
+          <span aria-hidden="true">✦</span>
+          Astra Premium
+        </span>
+        <h2 className="mt-6 font-serif text-4xl leading-tight text-white sm:text-5xl" id="premium-upgrade-title">
+          Premium Upgrade Required
+        </h2>
+        <p className="mt-4 text-base leading-7 text-violet-100/70">
+          {title
+            ? `Unlock ${title} and explore the full Astra collection with a Premium membership.`
+            : 'Unlock this story and explore the full Astra collection with a Premium membership.'}
+        </p>
+        <button
+          className="mt-8 rounded-full bg-gradient-to-r from-violet-300 to-fuchsia-300 px-7 py-3 text-sm font-semibold text-[#21152f] shadow-lg shadow-violet-950/30 transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-100"
+          onClick={onUpgrade}
+          type="button"
+        >
+          Upgrade Now
+        </button>
+      </div>
+    </section>
+  )
+}
+
+export default function PremiumVideoPlayer({ videoId, title, onUpgrade }) {
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState({ status: 'loading' })
 
@@ -45,16 +85,12 @@ export default function PremiumVideoPlayer({ videoId, onUpgrade }) {
       }
 
       try {
-        const [videoResponse, authResponse] = await Promise.all([
-          supabase
-            .from('videos')
-            .select('id, title, description, thumbnail_url, video_url, is_premium')
-            .eq('id', videoId)
-            .maybeSingle(),
+        const [screeningResponse, authResponse] = await Promise.all([
+          supabase.rpc('get_video_screening_meta', { p_video_id: videoId }),
           supabase.auth.getUser(),
         ])
 
-        if (videoResponse.error) throw videoResponse.error
+        if (screeningResponse.error) throw screeningResponse.error
         if (authResponse.error) throw authResponse.error
 
         let subscriptionTier = 'free'
@@ -70,6 +106,36 @@ export default function PremiumVideoPlayer({ videoId, onUpgrade }) {
           if (profileResponse.error) throw profileResponse.error
           subscriptionTier = profileResponse.data?.subscription_tier ?? 'free'
         }
+
+        const screeningMeta = Array.isArray(screeningResponse.data)
+          ? screeningResponse.data[0]
+          : screeningResponse.data
+
+        if (!screeningMeta || typeof screeningMeta.is_accessible !== 'boolean') {
+          throw new Error('The screening access check returned an invalid response.')
+        }
+
+        if (!screeningMeta.is_accessible) {
+          if (active) {
+            setResult(
+              subscriptionTier === 'premium'
+                ? {
+                    status: 'not-found',
+                    message: 'This video is unavailable or your account does not have access.',
+                  }
+                : { status: 'upgrade', title },
+            )
+          }
+          return
+        }
+
+        const videoResponse = await supabase
+          .from('videos')
+          .select('id, title, description, thumbnail_url, video_url, is_premium')
+          .eq('id', videoId)
+          .maybeSingle()
+
+        if (videoResponse.error) throw videoResponse.error
 
         const video = videoResponse.data
         if (!video) {
@@ -97,9 +163,13 @@ export default function PremiumVideoPlayer({ videoId, onUpgrade }) {
     return () => {
       active = false
     }
-  }, [attempt, videoId])
+  }, [attempt, title, videoId])
 
   if (result.status === 'loading') return <LoadingState />
+
+  if (result.status === 'upgrade') {
+    return <UpgradeOverlay onUpgrade={onUpgrade} title={result.title} />
+  }
 
   if (result.status === 'error' || result.status === 'not-found') {
     return (
@@ -129,41 +199,7 @@ export default function PremiumVideoPlayer({ videoId, onUpgrade }) {
   const requiresUpgrade = video.is_premium && subscriptionTier !== 'premium'
 
   if (requiresUpgrade) {
-    return (
-      <section
-        aria-labelledby="premium-upgrade-title"
-        className="relative flex min-h-[24rem] items-center justify-center overflow-hidden rounded-2xl border border-violet-200/15 bg-[#100d19] px-6 py-12 text-center text-violet-50 shadow-2xl shadow-violet-950/30 sm:min-h-[32rem]"
-      >
-        {video.thumbnail_url && (
-          <img
-            alt=""
-            aria-hidden="true"
-            className="absolute inset-0 size-full object-cover opacity-30"
-            src={video.thumbnail_url}
-          />
-        )}
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-[#100d19]/90 via-[#100d19]/80 to-violet-950/80" />
-        <div className="relative z-10 max-w-xl">
-          <span className="inline-flex items-center gap-2 rounded-full border border-violet-200/20 bg-violet-200/10 px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-violet-200">
-            <span aria-hidden="true">✦</span>
-            Astra Premium
-          </span>
-          <h2 className="mt-6 font-serif text-4xl leading-tight text-white sm:text-5xl" id="premium-upgrade-title">
-            Premium Upgrade Required
-          </h2>
-          <p className="mt-4 text-base leading-7 text-violet-100/70">
-            Unlock this story and explore the full Astra collection with a Premium membership.
-          </p>
-          <button
-            className="mt-8 rounded-full bg-gradient-to-r from-violet-300 to-fuchsia-300 px-7 py-3 text-sm font-semibold text-[#21152f] shadow-lg shadow-violet-950/30 transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-100"
-            onClick={onUpgrade}
-            type="button"
-          >
-            Upgrade Now
-          </button>
-        </div>
-      </section>
-    )
+    return <UpgradeOverlay onUpgrade={onUpgrade} thumbnailUrl={video.thumbnail_url} title={video.title} />
   }
 
   return (
