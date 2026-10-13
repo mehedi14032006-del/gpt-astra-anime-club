@@ -128,6 +128,18 @@ function getAuthErrorMessage(error, password = '') {
   return [description, errorCode].filter(Boolean).join(' ')
 }
 
+function isSignupPasswordValid(password) {
+  const passwordCharacters = Array.from(password)
+
+  return (
+    passwordCharacters.length >= 8
+    && /\p{Ll}/u.test(password)
+    && /\p{Lu}/u.test(password)
+    && /\p{N}/u.test(password)
+    && /[\p{P}\p{S}]/u.test(password)
+  )
+}
+
 function AuthDialog({ onClose, onAuthenticated }) {
   const [mode, setMode] = useState('signup')
   const [email, setEmail] = useState('')
@@ -141,24 +153,24 @@ function AuthDialog({ onClose, onAuthenticated }) {
     setErrorMessage('')
     setSuccessMessage('')
 
-    const normalizedEmail = email.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    const formData = new FormData(event.currentTarget)
+    const submittedEmail = String(formData.get('email') ?? '')
+    const normalizedEmail = submittedEmail.trim()
+    const submittedPassword = String(formData.get('password') ?? '')
+    const emailInput = event.currentTarget.elements.namedItem('email')
+    setEmail(submittedEmail)
+    setPassword(submittedPassword)
+
+    if (!(emailInput instanceof HTMLInputElement) || !emailInput.validity.valid) {
       setErrorMessage('Enter a valid email address to continue.')
       return
     }
     if (mode === 'signup') {
-      const passwordCharacters = Array.from(password)
-      if (
-        passwordCharacters.length < 8
-        || !/\p{Ll}/u.test(password)
-        || !/\p{Lu}/u.test(password)
-        || !/\p{N}/u.test(password)
-        || !/[\p{P}\p{S}]/u.test(password)
-      ) {
+      if (!isSignupPasswordValid(submittedPassword)) {
         setErrorMessage('Use at least 8 characters, including a lowercase letter, an uppercase letter, a number, and a symbol.')
         return
       }
-    } else if (password.length < 6) {
+    } else if (submittedPassword.length < 6) {
       setErrorMessage('Your password must be at least 6 characters long.')
       return
     }
@@ -173,20 +185,20 @@ function AuthDialog({ onClose, onAuthenticated }) {
         mode === 'signup'
           ? await supabase.auth.signUp({
               email: normalizedEmail,
-              password,
+              password: submittedPassword,
               options: { emailRedirectTo: window.location.origin },
             })
-          : await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
+          : await supabase.auth.signInWithPassword({ email: normalizedEmail, password: submittedPassword })
 
       if (error) {
-        setErrorMessage(getAuthErrorMessage(error, password))
+        setErrorMessage(getAuthErrorMessage(error, submittedPassword))
       } else if (mode === 'signup' && !data.session) {
         setSuccessMessage('If this is a new account, check your inbox for a confirmation link. If you already have an account, log in instead.')
       } else {
         onAuthenticated()
       }
     } catch (error) {
-      setErrorMessage(getAuthErrorMessage(error, password))
+      setErrorMessage(getAuthErrorMessage(error, submittedPassword))
     } finally {
       setLoading(false)
     }
@@ -223,13 +235,18 @@ function AuthDialog({ onClose, onAuthenticated }) {
             ? 'Create your Astra Anime Club account and meet your people among the stars.'
             : 'Sign in to return to your Astra Anime Club account.'}
         </p>
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <form className="auth-form" noValidate onSubmit={handleSubmit}>
           <label htmlFor="auth-email">Email address</label>
           <input
             autoComplete="email"
             autoFocus
             id="auth-email"
-            onChange={(event) => setEmail(event.target.value)}
+            name="email"
+            onChange={(event) => {
+              setEmail(event.target.value)
+              setErrorMessage('')
+              setSuccessMessage('')
+            }}
             required
             type="email"
             value={email}
@@ -239,7 +256,12 @@ function AuthDialog({ onClose, onAuthenticated }) {
             autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             id="auth-password"
             minLength={mode === 'signup' ? 8 : 6}
-            onChange={(event) => setPassword(event.target.value)}
+            name="password"
+            onChange={(event) => {
+              setPassword(event.target.value)
+              setErrorMessage('')
+              setSuccessMessage('')
+            }}
             required
             type="password"
             value={password}
