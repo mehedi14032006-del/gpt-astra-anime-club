@@ -140,17 +140,28 @@ function isSignupPasswordValid(password) {
   )
 }
 
+const signupPasswordRequirementsMessage =
+  'Use at least 8 characters, including a lowercase letter, an uppercase letter, a number, and a symbol.'
+
 function AuthDialog({ onClose, onAuthenticated }) {
   const [mode, setMode] = useState('signup')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [passwordValidationAttempted, setPasswordValidationAttempted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
   function handlePasswordInput(event) {
-    setPassword(event.currentTarget.value)
-    setErrorMessage('')
+    const currentPassword = event.currentTarget.value
+    setPassword(currentPassword)
+    setErrorMessage(
+      passwordValidationAttempted
+      && mode === 'signup'
+      && !isSignupPasswordValid(currentPassword)
+        ? signupPasswordRequirementsMessage
+        : '',
+    )
     setSuccessMessage('')
   }
 
@@ -177,8 +188,9 @@ function AuthDialog({ onClose, onAuthenticated }) {
       return
     }
     if (mode === 'signup') {
+      setPasswordValidationAttempted(true)
       if (!isSignupPasswordValid(submittedPassword)) {
-        setErrorMessage('Use at least 8 characters, including a lowercase letter, an uppercase letter, a number, and a symbol.')
+        setErrorMessage(signupPasswordRequirementsMessage)
         return
       }
     } else if (submittedPassword.length < 6) {
@@ -270,6 +282,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
             name="password"
             onChange={handlePasswordInput}
             onInput={handlePasswordInput}
+            onBlur={handlePasswordInput}
             required
             type="password"
             value={password}
@@ -287,6 +300,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
             disabled={loading}
             onClick={() => {
               setMode(mode === 'signup' ? 'login' : 'signup')
+              setPasswordValidationAttempted(false)
               setErrorMessage('')
               setSuccessMessage('')
             }}
