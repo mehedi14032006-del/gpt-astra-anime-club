@@ -3,6 +3,10 @@
   overflow: hidden;
 }
 
+.app-shell {
+  min-height: 100vh;
+}
+
 main {
   --ink: #f4efff;
   --muted: #a39ab8;
@@ -607,6 +611,37 @@ a:focus-visible {
 
 .mobile-break {
   display: none;
+}
+
+.catalog-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: -16px 0 28px;
+}
+
+.catalog-filter {
+  padding: 8px 13px;
+  color: #aaa0b7;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(224, 211, 255, 0.12);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.catalog-filter:hover,
+.catalog-filter.is-active {
+  color: #eee8fa;
+  background: rgba(168, 137, 251, 0.15);
+  border-color: rgba(211, 192, 255, 0.4);
+}
+
+.catalog-filter:focus-visible {
+  outline: 2px solid #d3c0ff;
+  outline-offset: 3px;
 }
 
 .artwork-grid {
@@ -1457,5 +1492,7 @@ a:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation: none !important;
   }
+
 }

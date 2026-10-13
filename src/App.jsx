@@ -1,30 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
+import './styles/cosmic-animations.css'
+import AnimeCatalog from './components/AnimeCatalog.jsx'
+import CosmicIntro from './components/CosmicIntro.jsx'
 import { sanitizeSupabaseErrorText, supabase } from './lib/supabase.js'
-
-const artworks = [
-  {
-    number: '01',
-    title: 'After the last train',
-    type: 'Character study',
-    theme: 'train',
-    description: 'Illustration placeholder: a quiet moment beneath city lights.',
-  },
-  {
-    number: '02',
-    title: 'Letters to the moon',
-    type: 'World building',
-    theme: 'moon',
-    description: 'Illustration placeholder: a dreamlike garden in moonlight.',
-  },
-  {
-    number: '03',
-    title: 'A little more stardust',
-    type: 'Original character',
-    theme: 'stardust',
-    description: 'Illustration placeholder: an original character among the stars.',
-  },
-]
 
 function Sparkle({ className = '' }) {
   return (
@@ -56,34 +35,6 @@ function ArrowIcon() {
   )
 }
 
-function Artwork({ artwork }) {
-  return (
-    <article className="artwork-card">
-      <div
-        aria-label={artwork.description}
-        className={`artwork artwork--${artwork.theme}`}
-        role="img"
-      >
-        <span className="artwork-label">ORIGINAL ART · STUDY {artwork.number}</span>
-        <span aria-hidden="true" className="artwork-moon" />
-        <span aria-hidden="true" className="artwork-orbit" />
-        <span aria-hidden="true" className="artwork-character">
-          <span className="character-hair" />
-          <span className="character-face" />
-          <span className="character-body" />
-        </span>
-        <Sparkle className="artwork-sparkle artwork-sparkle--one" />
-        <Sparkle className="artwork-sparkle artwork-sparkle--two" />
-        <span className="artwork-caption">{artwork.type}</span>
-      </div>
-      <div className="artwork-info">
-        <h3>{artwork.title}</h3>
-        <span>0{artwork.number}</span>
-      </div>
-    </article>
-  )
-}
-
 function getAuthErrorMessage(error, password = '') {
   const message = sanitizeSupabaseErrorText(
     error instanceof Error ? error.message : error?.message || '',
@@ -105,7 +56,14 @@ function getAuthErrorMessage(error, password = '') {
     : []
   let guidance = ''
 
-  if (normalizedMessage.includes('invalid login credentials') || normalizedCode === 'invalid_credentials') {
+  if (
+    normalizedMessage.includes('failed to fetch')
+    || normalizedMessage.includes('networkerror')
+    || normalizedMessage.includes('network request failed')
+    || normalizedMessage.includes('load failed')
+  ) {
+    guidance = 'Could not reach the Supabase Auth API. Verify VITE_SUPABASE_URL is the API URL for an active Supabase project and VITE_SUPABASE_PUBLISHABLE_KEY is that same project’s publishable key in Vercel. Check the browser Network tab for DNS or connection errors, then redeploy after changing either variable.'
+  } else if (normalizedMessage.includes('invalid login credentials') || normalizedCode === 'invalid_credentials') {
     guidance = 'Check your email and password and try again.'
   } else if (normalizedMessage.includes('already registered') || normalizedMessage.includes('already been registered') || normalizedCode === 'user_already_exists') {
     guidance = 'An account may already exist for this email. Try logging in.'
@@ -198,7 +156,7 @@ function AuthDialog({ onClose, onAuthenticated }) {
       return
     }
     if (!supabase) {
-      setErrorMessage('Supabase is not configured. Add the project URL and publishable key to .env.local, then restart the app.')
+      setErrorMessage('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY for this Vercel environment, then redeploy. For local development, add them to .env.local and restart Vite. Use the publishable key, never a service_role key, in the frontend.')
       return
     }
 
@@ -321,6 +279,8 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [signOutLoading, setSignOutLoading] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [introVisible, setIntroVisible] = useState(true)
+  const handleIntroComplete = useCallback(() => setIntroVisible(false), [])
 
   useEffect(() => {
     if (!supabase) return undefined
@@ -352,7 +312,9 @@ function App() {
   }
 
   return (
-    <main>
+    <>
+      {introVisible && <CosmicIntro onComplete={handleIntroComplete} />}
+      <div className="app-shell">
       <header className="site-header">
         <a aria-label="Astra Anime Club home" className="wordmark" href="#home">
           <span aria-hidden="true" className="wordmark-mark">
@@ -383,6 +345,7 @@ function App() {
         )}
       </header>
 
+      <main>
       <section aria-labelledby="hero-title" className="hero" id="home">
         <div className="hero-copy">
           <div className="eyebrow">
@@ -458,26 +421,7 @@ function App() {
         <span>Anime, always</span>
       </section>
 
-      <section aria-labelledby="gallery-title" className="gallery-section" id="gallery">
-        <div className="section-heading">
-          <div>
-            <span className="section-kicker">A peek inside our universe</span>
-            <h2 id="gallery-title">
-              Little worlds,
-              <br className="mobile-break" /> <span>big feelings.</span>
-            </h2>
-          </div>
-          <p>
-            Original art, character concepts, and scenes from stories still
-            being imagined. This is just the beginning.
-          </p>
-        </div>
-        <div className="artwork-grid">
-          {artworks.map((artwork) => (
-            <Artwork artwork={artwork} key={artwork.number} />
-          ))}
-        </div>
-      </section>
+      <AnimeCatalog />
 
       <section aria-labelledby="membership-title" className="membership-section" id="membership">
         <div className="membership-orbit" aria-hidden="true">
@@ -527,6 +471,7 @@ function App() {
           </span>
         </div>
       </section>
+      </main>
 
       <footer className="site-footer">
         <a aria-label="Astra Anime Club home" className="wordmark wordmark--footer" href="#home">
@@ -559,7 +504,8 @@ function App() {
           <button aria-label="Dismiss message" onClick={() => setAuthError('')} type="button">×</button>
         </p>
       )}
-    </main>
+      </div>
+    </>
   )
 }
 
