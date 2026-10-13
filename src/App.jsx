@@ -148,6 +148,12 @@ function AuthDialog({ onClose, onAuthenticated }) {
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
+  function handlePasswordInput(event) {
+    setPassword(event.currentTarget.value)
+    setErrorMessage('')
+    setSuccessMessage('')
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setErrorMessage('')
@@ -156,8 +162,13 @@ function AuthDialog({ onClose, onAuthenticated }) {
     const formData = new FormData(event.currentTarget)
     const submittedEmail = String(formData.get('email') ?? '')
     const normalizedEmail = submittedEmail.trim()
-    const submittedPassword = String(formData.get('password') ?? '')
+    const passwordInput = event.currentTarget.elements.namedItem('password')
     const emailInput = event.currentTarget.elements.namedItem('email')
+    if (!(passwordInput instanceof HTMLInputElement)) {
+      setErrorMessage('Enter your password to continue.')
+      return
+    }
+    const submittedPassword = passwordInput.value
     setEmail(submittedEmail)
     setPassword(submittedPassword)
 
@@ -257,11 +268,8 @@ function AuthDialog({ onClose, onAuthenticated }) {
             id="auth-password"
             minLength={mode === 'signup' ? 8 : 6}
             name="password"
-            onChange={(event) => {
-              setPassword(event.target.value)
-              setErrorMessage('')
-              setSuccessMessage('')
-            }}
+            onChange={handlePasswordInput}
+            onInput={handlePasswordInput}
             required
             type="password"
             value={password}
