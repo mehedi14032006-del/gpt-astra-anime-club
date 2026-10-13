@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
-import { sanitizeSupabaseErrorText, supabase } from '../lib/supabase.js'
+import { getSupabaseErrorMessage, supabase } from '../lib/supabase.js'
 import './PremiumVideoPlayer.css'
 
 function getErrorMessage(error) {
-  return sanitizeSupabaseErrorText(
-    error instanceof Error ? error.message : error?.message || 'An unexpected error occurred.',
-  )
+  return getSupabaseErrorMessage(error)
 }
 
 function LoadingState() {

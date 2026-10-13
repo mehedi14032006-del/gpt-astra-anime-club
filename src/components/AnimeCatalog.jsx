@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { sanitizeSupabaseErrorText, supabase } from '../lib/supabase.js'
+import { getSupabaseErrorMessage, supabase } from '../lib/supabase.js'
 import PremiumVideoPlayer from './PremiumVideoPlayer.jsx'
 import './AnimeCatalog.css'
 
@@ -147,8 +147,7 @@ export default function AnimeCatalog() {
         }
       } catch (error) {
         if (isMounted) {
-          const message = error instanceof Error ? error.message : error?.message || 'An unexpected error occurred.'
-          setLoadError(sanitizeSupabaseErrorText(message))
+          setLoadError(getSupabaseErrorMessage(error))
           setIsLoading(false)
         }
       }
