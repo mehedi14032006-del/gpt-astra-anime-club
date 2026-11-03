@@ -1,18 +1,178 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="A home for curious anime fans, original characters, and stories among the stars. Find your orbit at Astra Anime Club."
-    />
-    <meta name="theme-color" content="#100d19" />
-    <title>Astra Anime Club — Find your orbit</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kitsune+ – Anime streaming</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{--bg:#120d24;--surf:#1d1636;--surf2:#2a2048;--tx:#f5f1ff;--mut:#a79fc4;--pink:#ff5c8a;--gold:#f6c453;--line:#352b5c;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 "Avenir Next",Avenir,"Segoe UI",system-ui,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:12px 20px;background:rgba(18,13,36,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.logo{font-weight:800;font-size:22px}.logo b{color:var(--pink)}
+.search{flex:1;min-width:140px;max-width:380px;padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surf);color:var(--tx);font:inherit}
+.acct{margin-left:auto;display:flex;align-items:center;gap:10px}
+.badge{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--surf2);color:var(--mut)}.badge.pm{background:var(--gold);color:#2a1d00;font-weight:700}
+.ad{margin:0;padding:8px 20px;text-align:center;font-size:13px;color:var(--mut);background:repeating-linear-gradient(45deg,var(--surf),var(--surf) 10px,var(--surf2) 10px,var(--surf2) 20px)}
+.hero{min-height:380px;display:flex;align-items:flex-end;padding:40px 20px;background:radial-gradient(circle at 78% 30%,#ff5c8a99,transparent 45%),radial-gradient(circle at 90% 80%,#5b3df5aa,transparent 50%),linear-gradient(120deg,#2a1257,#120d24 70%)}
+.hero>div{max-width:560px}.hero h1{font-size:clamp(32px,6vw,56px);line-height:1.05;margin:0 0 10px}.hero p{color:var(--mut);margin:0 0 20px}
+.btn{display:inline-block;padding:11px 22px;border-radius:10px;background:var(--pink);color:#fff;font-weight:700;margin-right:8px}
+.btn.alt{background:var(--surf2)}.btn.gold{background:var(--gold);color:#2a1d00}
+.chips{display:flex;gap:8px;padding:18px 20px 0;overflow-x:auto}
+.chips button{flex:none;padding:6px 14px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}.chips button.on{background:var(--tx);color:var(--bg);border-color:var(--tx)}
+section.row{padding:22px 20px 0}.row h2{font-size:20px;margin:0 0 12px;display:flex;align-items:center;gap:10px}
+.tag{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--pink);font-weight:700}
+.rail{display:flex;gap:14px;overflow-x:auto;padding-bottom:10px}
+.card{flex:none;width:150px;text-align:left}
+.poster{height:215px;border-radius:12px;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:10px;font-weight:800;font-size:15px;line-height:1.15;box-shadow:inset 0 -70px 50px -30px #000b;transition:transform .2s}
+.card:hover .poster{transform:translateY(-4px)}
+.poster i{position:absolute;top:8px;left:8px;font-style:normal;font-size:11px;font-weight:700;background:#000a;padding:2px 7px;border-radius:5px}
+.poster i.pm{background:var(--gold);color:#2a1d00;left:auto;right:8px}
+.card small{display:block;color:var(--mut);margin-top:6px;font-size:13px}
+.empty{color:var(--mut)}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;padding:12px 20px 0;max-width:760px}
+.pc{border:1px solid var(--line);border-radius:16px;padding:22px;background:var(--surf)}.pc.pm{border-color:var(--gold)}
+.pc h3{margin:0}.pc .pr{font-size:30px;font-weight:800;margin:6px 0}.pc ul{padding-left:18px;color:var(--mut);margin:10px 0 18px}
+footer{padding:36px 20px 50px;color:var(--mut);font-size:14px}
+.ov{position:fixed;inset:0;z-index:50;background:#000c;display:none;align-items:center;justify-content:center;padding:16px}.ov.show{display:flex}
+.box{background:var(--surf);border:1px solid var(--line);border-radius:16px;width:100%;max-width:720px;max-height:92vh;overflow:auto;padding:18px}
+.gate{max-width:380px;text-align:center}
+.gate input{width:100%;padding:10px 12px;margin:6px 0;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font:inherit}
+.msg{min-height:22px;color:var(--gold);font-size:14px}
+.screen{aspect-ratio:16/9;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:12px}
+.bar{height:5px;background:#fff3;border-radius:5px;overflow:hidden;width:80%}.bar span{display:block;height:100%;width:0;background:var(--pink)}
+.eps{margin:14px 0 0;padding:0;list-style:none;display:grid;gap:6px}.eps li{padding:9px 12px;border-radius:8px;background:var(--surf2);display:flex;justify-content:space-between}
+.eps .lock{color:var(--gold);font-size:13px}.x{float:right;font-size:22px;color:var(--mut)}
+@media (prefers-reduced-motion:reduce){.poster{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Kitsune<b>+</b></span>
+  <input id="q" class="search" type="search" placeholder="Search anime" aria-label="Search anime">
+  <div class="acct"><span id="badge" class="badge">Free</span><button id="acct" class="btn alt" style="margin:0;padding:8px 16px">Sign in</button></div>
+</header>
+<p class="ad" id="topad">Ad space · banner ads show here on the free plan</p>
+<div class="hero"><div>
+  <h1>Crimson Ronin</h1>
+  <p>A masterless swordsman crosses a neon-lit Edo to settle one last debt. New episode every Saturday.</p>
+  <button class="btn" data-play="0">Watch now</button>
+</div></div>
+<div class="chips" id="chips"></div>
+<div id="rows"></div>
+<section class="row" id="premium">
+  <h2>Choose your plan</h2>
+  <div class="plans">
+    <div class="pc"><h3>Free</h3><div class="pr">$0</div><ul><li>Full catalog</li><li>Ads before and during episodes</li><li>720p video</li></ul></div>
+    <div class="pc pm"><h3>Premium</h3><div class="pr">$7.99<small style="font-size:14px;color:var(--mut)"> / month</small></div>
+      <ul><li>No ads, ever</li><li>1080p HD video</li><li>New episodes one hour early</li><li>Download to watch offline</li></ul>
+      <button class="btn gold" id="gopm">Go Premium</button></div>
+  </div>
+</section>
+<footer>Kitsune+ · Placeholder titles. Add your licensed content to go live.</footer>
+
+<div class="ov" id="auth"><div class="box gate">
+  <button class="x" id="authx" aria-label="Close">×</button>
+  <h2>Sign in or create account</h2>
+  <input id="em" type="email" placeholder="Email" autocomplete="email">
+  <input id="pw" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+  <p class="msg" id="msg"></p>
+  <button class="btn" id="si">Sign in</button><button class="btn alt" id="su">Create account</button>
+</div></div>
+
+<div class="ov" id="age"><div class="box gate">
+  <h2>Mature content (18+)</h2>
+  <p style="color:var(--mut)">These titles contain graphic violence and adult themes. Confirm you are 18 or older to continue.</p>
+  <button class="btn" id="yes">I am 18 or older</button><button class="btn alt" id="no">Go back</button>
+</div></div>
+
+<div class="ov" id="pl"><div class="box">
+  <button class="x" id="cl" aria-label="Close">×</button>
+  <h2 id="pt" style="margin:0 0 12px"></h2>
+  <div class="screen" id="sc"></div>
+  <ul class="eps" id="eps"></ul>
+</div></div>
+
+<script>
+var SB_URL="https://deisgdxetikwkpxrgroz.supabase.co";
+var SB_KEY="sb_publishable_qtNTn3hsjyYe8RuX4ZBVyA_qkqkTETF";
+var sb=supabase.createClient(SB_URL,SB_KEY);
+var T=[
+["Crimson Ronin","Action",0,330],["Neon Requiem","Sci-fi",0,265],["Starbound Academy","Romance",0,200],["Ashen Blade","Fantasy",0,20],
+["Moonlit Kitchen","Slice of life",0,150],["Void Hunters","Sci-fi",0,290],["Cyber Shrine","Action",0,185],["Tidebreaker","Fantasy",0,215],
+["Hollow Crown","Fantasy",1,350],["Blood Lantern","Action",1,5],["Night Syndicate","Thriller",1,260],["Iron Veil","Thriller",1,235]];
+var G=["All","Action","Sci-fi","Romance","Fantasy","Slice of life","Thriller"];
+var S={plan:"free",genre:"All",age:false,q:"",pending:null,timer:null,session:null};
+var $=function(i){return document.getElementById(i)};
+function bg(h){return"linear-gradient(160deg,hsl("+h+",75%,52%),hsl("+((h+50)%360)+",70%,22%))"}
+function card(i){var t=T[i];return'<button class="card" data-play="'+i+'"><div class="poster" style="background:'+bg(t[3])+'">'+(t[2]?'<i>18+</i>':'')+(i%3==0?'<i class="pm">Early</i>':'')+t[0]+'</div><small>'+t[1]+' · 12 episodes</small></button>'}
+function rowHtml(title,ids,tag){
+  var h='<section class="row"><h2>'+title+(tag?' <span class="tag">18+</span>':'')+'</h2><div class="rail">',n=0;
+  ids.forEach(function(i){var t=T[i];if((S.genre=="All"||t[1]==S.genre)&&t[0].toLowerCase().indexOf(S.q)>-1){h+=card(i);n++}});
+  return n?h+'</div></section>':''}
+function render(){
+  var out=rowHtml("Trending now",[0,1,2,3,5,6],0)+rowHtml("New episodes",[4,7,1,6,0,3],0)+rowHtml("Mature",[8,9,10,11],1);
+  $("rows").innerHTML=out||'<section class="row"><p class="empty">No titles match. Try another search or genre.</p></section>';
+  $("chips").innerHTML=G.map(function(g){return'<button class="'+(g==S.genre?"on":"")+'" data-g="'+g+'">'+g+'</button>'}).join("");
+  $("topad").style.display=S.plan=="free"?"block":"none";
+  $("badge").textContent=S.plan=="pm"?"Premium":"Free";$("badge").className="badge"+(S.plan=="pm"?" pm":"");
+  $("acct").textContent=S.session?"Sign out":"Sign in";
+  $("gopm").textContent=S.plan=="pm"?"You are Premium":"Go Premium"}
+async function loadPlan(){
+  var r=await sb.auth.getSession();S.session=r.data.session;
+  if(!S.session){S.plan="free";render();return}
+  var p=await sb.from("profiles").select("subscription_tier,age_confirmed").single();
+  if(p.data){S.plan=p.data.subscription_tier=="premium"?"pm":"free";if(p.data.age_confirmed)S.age=true}
+  render()}
+$("q").oninput=function(e){S.q=e.target.value.toLowerCase();render()};
+document.addEventListener("click",function(e){
+  var g=e.target.closest("[data-g]");if(g){S.genre=g.dataset.g;render();return}
+  var p=e.target.closest("[data-play]");if(p)openTitle(+p.dataset.play)});
+/* Auth */
+$("acct").onclick=async function(){if(S.session){await sb.auth.signOut();S.age=false;loadPlan()}else $("auth").classList.add("show")};
+$("authx").onclick=function(){$("auth").classList.remove("show")};
+async function authGo(up){
+  var m=$("msg");m.textContent="Working...";
+  var c={email:$("em").value.trim(),password:$("pw").value};
+  var r=up?await sb.auth.signUp(c):await sb.auth.signInWithPassword(c);
+  if(r.error){m.textContent=r.error.message;return}
+  if(up&&!r.data.session){m.textContent="Check your email to confirm your account, then sign in.";return}
+  $("auth").classList.remove("show");m.textContent="";loadPlan()}
+$("si").onclick=function(){authGo(false)};$("su").onclick=function(){authGo(true)};
+/* Premium checkout */
+$("gopm").onclick=async function(){
+  if(S.plan=="pm")return;
+  if(!S.session){$("auth").classList.add("show");$("msg").textContent="Sign in first, then choose Premium.";return}
+  this.textContent="Opening checkout...";
+  try{
+    var r=await fetch("/api/checkout",{method:"POST",headers:{Authorization:"Bearer "+S.session.access_token}});
+    var d=await r.json();if(d.url)location.href=d.url;else throw 0}
+  catch(e){this.textContent="Try again"}};
+/* Player */
+function openTitle(i){
+  if(T[i][2]&&!S.age){S.pending=i;$("age").classList.add("show");return}
+  var t=T[i];$("pt").textContent=t[0];$("sc").style.background=bg(t[3]);
+  $("eps").innerHTML=[1,2,3,4].map(function(n){return'<li><span>Episode '+n+'</span>'+(n==4&&S.plan=="free"?'<span class="lock">Premium early access</span>':'<span style="color:var(--mut)">24 min</span>')+'</li>'}).join("");
+  $("pl").classList.add("show");
+  if(S.plan=="free")runAd();else playMain()}
+function runAd(){
+  var n=5;clearInterval(S.timer);
+  function paint(){$("sc").innerHTML='<b>Ad · your episode starts in '+n+'</b><span style="color:#ffffffcc;font-size:14px">Go Premium to remove ads</span>'}
+  paint();S.timer=setInterval(function(){n--;if(n<=0){clearInterval(S.timer);playMain()}else paint()},1000)}
+function playMain(){
+  $("sc").innerHTML='<b style="font-size:20px">Now playing</b><span style="color:#ffffffcc;font-size:14px">'+(S.plan=="pm"?"1080p · no ads":"720p · with ads")+'</span><div class="bar"><span id="pg"></span></div>';
+  var w=0;clearInterval(S.timer);S.timer=setInterval(function(){w=(w+1)%101;var b=$("pg");if(b)b.style.width=w+"%"},120)}
+function closePl(){clearInterval(S.timer);$("pl").classList.remove("show")}
+$("cl").onclick=closePl;$("pl").onclick=function(e){if(e.target==this)closePl()};
+$("yes").onclick=async function(){S.age=true;$("age").classList.remove("show");
+  if(S.session)await sb.rpc("confirm_age");
+  if(S.pending!=null)openTitle(S.pending)};
+$("no").onclick=function(){$("age").classList.remove("show")};
+render();loadPlan();
+if(location.search.indexOf("checkout=success")>-1){var tries=0,iv=setInterval(function(){loadPlan();if(S.plan=="pm"||++tries>8){clearInterval(iv);history.replaceState(null,"","/")}},2000)}
+</script>
+</body>
 </html>
