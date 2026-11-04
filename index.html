@@ -17,7 +17,9 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px
 .search{flex:1;min-width:140px;max-width:380px;padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surf);color:var(--tx);font:inherit}
 .acct{margin-left:auto;display:flex;align-items:center;gap:10px}
 .badge{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--surf2);color:var(--mut)}.badge.pm{background:var(--gold);color:#2a1d00;font-weight:700}
-.ad{margin:0;padding:8px 20px;text-align:center;font-size:13px;color:var(--mut);background:repeating-linear-gradient(45deg,var(--surf),var(--surf) 10px,var(--surf2) 10px,var(--surf2) 20px)}
+.adslot{display:none;margin:16px 20px;text-align:center;overflow:hidden}
+.adslot[data-on="1"]{display:block}
+body.pm .adslot{display:none!important}
 .hero{min-height:240px;display:flex;align-items:flex-end;padding:40px 20px;background:radial-gradient(circle at 78% 30%,#ff5c8a99,transparent 45%),radial-gradient(circle at 90% 80%,#5b3df5aa,transparent 50%),linear-gradient(120deg,#2a1257,#120d24 70%)}
 .hero>div{max-width:560px}.hero h1{font-size:clamp(30px,6vw,52px);line-height:1.05;margin:0 0 10px}.hero p{color:var(--mut);margin:0}
 .btn{display:inline-block;padding:11px 22px;border-radius:10px;background:var(--pink);color:#fff;font-weight:700;margin:0 8px 8px 0;text-decoration:none}
@@ -59,23 +61,24 @@ footer{padding:36px 20px 50px;color:var(--mut);font-size:14px}
   <input id="q" class="search" type="search" placeholder="Search anime" aria-label="Search anime">
   <div class="acct"><span id="badge" class="badge">Free</span><button id="acct" class="btn alt" style="margin:0;padding:8px 16px">Sign in</button></div>
 </header>
-<p class="ad" id="topad">Ad space · banner ads show here on the free plan</p>
+<div class="adslot" id="ad-top"></div>
 <div class="hero"><div>
   <h1>Watch anime free</h1>
   <p>Full series from official free channels, plus trailers and a catalog of thousands of titles.</p>
 </div></div>
 <div class="chips" id="chips"></div>
 <div id="rows"></div>
+<div class="adslot" id="ad-mid" style="margin-top:24px"></div>
 <section class="row" id="premium">
   <h2>Choose your plan</h2>
   <div class="plans">
-    <div class="pc"><h3>Free</h3><div class="pr">$0</div><ul><li>Full catalog</li><li>Ads before videos</li></ul></div>
+    <div class="pc"><h3>Free</h3><div class="pr">$0</div><ul><li>Full catalog</li><li>Banner ads</li></ul></div>
     <div class="pc pm"><h3>Premium</h3><div class="pr">$7.99<small style="font-size:14px;color:var(--mut)"> / month</small></div>
       <ul><li>No ads, ever</li><li>Early access to licensed episodes</li><li>Watchlist sync across devices</li></ul>
       <button class="btn gold" id="gopm">Go Premium</button></div>
   </div>
 </section>
-<footer>Catalog data from MyAnimeList via the Jikan API. Trailers and free episodes play from their official YouTube and Internet Archive pages. Some channels are region-locked. Full series are on licensed services such as Crunchyroll, HIDIVE and Netflix.</footer>
+<footer>Catalog data from MyAnimeList via the Jikan API. Trailers and free episodes play from their official YouTube and Internet Archive pages. Some channels are region-locked. Full series are on licensed services such as Crunchyroll, HIDIVE and Netflix. <a href="/privacy.html">Privacy policy</a></footer>
 
 <div class="ov" id="auth"><div class="box gate">
   <button class="x" id="authx" aria-label="Close">×</button>
@@ -100,6 +103,12 @@ footer{padding:36px 20px 50px;color:var(--mut);font-size:14px}
 </div></div>
 
 <script>
+/* ---- AD SETTINGS ----
+   Leave empty until your ad network approves you. Ads show to Free users only, never over the video player.
+   Google AdSense: set adsense to "ca-pub-XXXXXXXXXXXXXXXX" and put your ad unit IDs in units.
+   Other networks: paste the banner code they give you into custom (top / mid). */
+var ADS={adsense:"",units:{top:"",mid:""},custom:{top:"",mid:""},height:{top:100,mid:250}};
+
 var SB_URL="https://deisgdxetikwkpxrgroz.supabase.co";
 var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlaXNnZHhldGlrd2tweHJncm96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4Mjg0MTIsImV4cCI6MjEwNzQwNDQxMn0.BpYuT1D7Lc-YdPdTWzDNgM_TnUwo7mnNT-9uCtjeqyg";
 var sb=null;
@@ -107,7 +116,7 @@ try{sb=supabase.createClient(SB_URL,SB_KEY)}catch(e){}
 var API="https://api.jikan.moe/v4";
 var GID={"Action":1,"Adventure":2,"Comedy":4,"Drama":8,"Fantasy":10,"Romance":22,"Sci-Fi":24};
 var G=["All"].concat(Object.keys(GID));
-var S={plan:"free",genre:"All",age:false,q:"",pending:null,timer:null,session:null,tok:0};
+var S={plan:"free",genre:"All",age:false,q:"",pending:null,timer:null,session:null,tok:0,adsInit:0};
 var R={trending:undefined,popular:undefined,mature:undefined,results:undefined,lib:[],err:0};
 var A={},L={};
 var YT="https://www.youtube.com/playlist?list=";
@@ -155,10 +164,24 @@ function render(){
   var err=R.err?'<section class="row"><p class="empty">Could not reach the anime catalog right now. <button class="btn alt" id="retry">Retry</button></p></section>':"";
   $("rows").innerHTML=searching?lib+rowHtml("More results",R.results,0,1)+err:lib+rowHtml("Airing now",R.trending)+rowHtml("Most popular",R.popular)+rowHtml("Mature",R.mature,1)+err;
   $("chips").innerHTML=G.map(function(g){return'<button class="'+(g==S.genre?"on":"")+'" data-g="'+g+'">'+g+'</button>'}).join("");
-  $("topad").style.display=S.plan=="free"?"block":"none";
+  document.body.classList.toggle("pm",S.plan=="pm");
   $("badge").textContent=S.plan=="pm"?"Premium":"Free";$("badge").className="badge"+(S.plan=="pm"?" pm":"");
   $("acct").textContent=S.session?"Sign out":"Sign in";
   $("gopm").textContent=S.plan=="pm"?"You are Premium":"Go Premium"}
+/* Ads: filled once per page load, free plan only */
+function initAds(){
+  if(S.adsInit||S.plan=="pm")return;S.adsInit=1;
+  if(ADS.adsense){var s=document.createElement("script");s.async=true;s.crossOrigin="anonymous";s.src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client="+encodeURIComponent(ADS.adsense);document.head.appendChild(s)}
+  ["top","mid"].forEach(function(n){
+    var el=$("ad-"+n);if(!el)return;
+    if(ADS.adsense&&ADS.units[n]){
+      el.innerHTML='<ins class="adsbygoogle" style="display:block" data-ad-client="'+esc(ADS.adsense)+'" data-ad-slot="'+esc(ADS.units[n])+'" data-ad-format="auto" data-full-width-responsive="true"></ins>';
+      el.dataset.on=1;try{(window.adsbygoogle=window.adsbygoogle||[]).push({})}catch(e){}
+    }else if(ADS.custom[n]){
+      var f=document.createElement("iframe");
+      f.setAttribute("sandbox","allow-scripts allow-popups allow-popups-to-escape-sandbox");
+      f.title="Advertisement";f.style.cssText="border:0;width:100%;height:"+(ADS.height[n]||100)+"px";
+      f.srcdoc=ADS.custom[n];el.appendChild(f);el.dataset.on=1}})}
 async function loadLib(){
   try{
     var r=await sb.from("titles").select("id,name,synopsis,genre,poster_url,is_mature,episodes(id,episode_number,name,video_url)").order("created_at",{ascending:false});
@@ -181,11 +204,12 @@ async function runQuery(){
 async function loadPlan(){
   try{
     var r=await sb.auth.getSession();S.session=r.data.session;
-    if(!S.session){S.plan="free";render();return}
-    var p=await sb.from("profiles").select("subscription_tier,age_confirmed").single();
-    if(p.data){S.plan=p.data.subscription_tier=="premium"?"pm":"free";if(p.data.age_confirmed)S.age=true}
+    if(!S.session){S.plan="free"}
+    else{
+      var p=await sb.from("profiles").select("subscription_tier,age_confirmed").single();
+      if(p.data){S.plan=p.data.subscription_tier=="premium"?"pm":"free";if(p.data.age_confirmed)S.age=true}}
   }catch(e){}
-  await loadLib();render()}
+  await loadLib();render();initAds()}
 var deb;
 $("q").oninput=function(e){S.q=e.target.value.trim();clearTimeout(deb);deb=setTimeout(runQuery,600)};
 document.addEventListener("click",function(e){
@@ -214,7 +238,7 @@ $("gopm").onclick=async function(){
     var r=await fetch("/api/checkout",{method:"POST",headers:{Authorization:"Bearer "+S.session.access_token}});
     var d=await r.json();if(d.url)location.href=d.url;else throw 0}
   catch(e){this.textContent="Try again"}};
-/* Player helpers */
+/* Player */
 function embedOf(u){
   try{
     var x=new URL(u),h=x.hostname.replace(/^www\./,"");
@@ -228,17 +252,12 @@ function embedOf(u){
     if(/\.(mp4|webm)$/i.test(x.pathname)&&x.protocol=="https:")return{t:"v",s:x.href}
   }catch(e){}
   return null}
-function runAd(done){
-  var n=5;clearInterval(S.timer);
-  function paint(){$("sc").innerHTML='<b>Ad · video starts in '+n+'</b><span style="opacity:.8;font-size:14px">Go Premium to remove ads</span>'}
-  paint();S.timer=setInterval(function(){n--;if(n<=0){clearInterval(S.timer);done()}else paint()},1000)}
 function mount(m,u){
   var s=$("sc");
   if(!m){s.innerHTML='<span>This video is not available.</span>';return}
   s.innerHTML=m.t=="v"?'<video controls autoplay playsinline src="'+esc(m.s)+'"></video>':'<iframe src="'+esc(m.s)+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Video"></iframe>';
   if(u)$("info").insertAdjacentHTML("beforeend",'<p>Video not loading? <a target="_blank" rel="noopener" href="'+esc(u)+'">Open it on the official channel</a> (some channels are region-locked).</p>')}
 function gated(m,key){if(m&&!S.age){S.pending=key;$("age").classList.add("show");return true}return false}
-/* Jikan title: official trailer + free-channel search */
 function openTitle(id){
   var a=A[id];if(!a)return;
   if(gated(isMature(a),{k:"a",id:id}))return;
@@ -251,31 +270,26 @@ function openTitle(id){
     +'<a class="btn alt" target="_blank" rel="noopener" href="https://www.crunchyroll.com/search?q='+encodeURIComponent(t)+'">Find on Crunchyroll</a>'
     +'<a class="btn alt" target="_blank" rel="noopener" href="'+esc(a.url)+'">MyAnimeList page</a>';
   $("pl").classList.add("show");
-  var u=a.trailer&&a.trailer.embed_url,m=u?{t:"f",s:u}:null;
-  if(S.plan=="free")runAd(function(){mount(m)});else mount(m)}
-/* Library title: full series */
+  var u=a.trailer&&a.trailer.embed_url;mount(u?{t:"f",s:u}:null)}
 function openLib(id){
   var t=L[id];if(!t)return;
   if(gated(t.is_mature,{k:"l",id:id}))return;
   $("pt").textContent=t.name;
   $("info").innerHTML=(t.synopsis?'<p>'+esc(t.synopsis)+'</p>':'')+(t.episodes.length>1?'<p>Choose an episode:</p>'+t.episodes.map(function(e,i){return'<button class="btn alt" data-t="'+esc(id)+'" data-ep="'+i+'">'+(e.name?esc(e.name):'Episode '+e.episode_number)+'</button>'}).join(""):"");
-  $("sc").innerHTML='<span>Loading...</span>';
   $("pl").classList.add("show");
   playEp(id,0)}
 function playEp(id,i){
   var t=L[id],e=t&&t.episodes[i];if(!e)return;
-  clearInterval(S.timer);
   var btns=document.querySelectorAll("[data-ep]");for(var k=0;k<btns.length;k++)btns[k].classList.toggle("on",k==i);
-  var m=embedOf(e.video_url);
-  if(S.plan=="free")runAd(function(){mount(m,e.video_url)});else mount(m,e.video_url)}
-function closePl(){clearInterval(S.timer);$("sc").innerHTML="";$("pl").classList.remove("show")}
+  mount(embedOf(e.video_url),e.video_url)}
+function closePl(){$("sc").innerHTML="";$("pl").classList.remove("show")}
 $("cl").onclick=closePl;$("pl").onclick=function(e){if(e.target==this)closePl()};
 $("yes").onclick=async function(){S.age=true;$("age").classList.remove("show");
   try{if(S.session)await sb.rpc("confirm_age")}catch(e){}
   var p=S.pending;S.pending=null;
   if(p)p.k=="l"?openLib(p.id):openTitle(p.id)};
 $("no").onclick=function(){$("age").classList.remove("show")};
-render();loadHome();loadPlan();loadLib();
+render();loadHome();loadPlan();
 if(location.search.indexOf("checkout=success")>-1){var tries=0,iv=setInterval(function(){loadPlan();if(S.plan=="pm"||++tries>8){clearInterval(iv);history.replaceState(null,"","/")}},2000)}
 </script>
 </body>
