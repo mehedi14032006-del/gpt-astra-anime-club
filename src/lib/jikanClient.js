@@ -126,30 +126,9 @@ export function mapJikanMediaToAnime(jikanItem, curatedDirectMatches = {}) {
     directMatch?.availability_type === 'direct-hd' && directMatch?.seasons
   );
 
-  const totalEps = Math.min(24, Math.max(1, jikanItem.episodes || (format === 'Movie' ? 1 : 12)));
-  const seasons = isDirectPlayable
+  const seasons = isDirectPlayable && directMatch.seasons
     ? directMatch.seasons
-    : [
-        {
-          season_number: 1,
-          name: format === 'Movie' ? 'Feature Film' : 'Season 1',
-          year: jikanItem.year || 2024,
-          episodes: Array.from({ length: totalEps }).map((_, i) => ({
-            episode_id: `mal-${malIdStr}:s1:e${i + 1}`,
-            ep: i + 1,
-            season: 1,
-            content_type: 'external_licensed_episode',
-            title: `Episode ${i + 1}`,
-            duration: jikanItem.duration && jikanItem.duration !== 'Unknown' ? `${jikanItem.duration} (Broadcast)` : 'External Partner',
-            duration_seconds: null, // Never fabricate a fake in-app duration for unhosted external episodes
-            synopsis: `Official episode ${i + 1} of ${titleEnglish}. Full-length episode available on authorized legal streaming partners.`,
-            stream_url: null,
-            embed_url: null, // Strictly null: never assign a promotional trailer URL as an episode source
-            source_status: 'external-partner',
-            is_preview_only: false
-          }))
-        }
-      ];
+    : [];
 
   return {
     id: directMatch?.id || `mal-${malIdStr}`,
@@ -161,8 +140,10 @@ export function mapJikanMediaToAnime(jikanItem, curatedDirectMatches = {}) {
     studio: jikanItem.studios?.[0]?.name || directMatch?.studio || 'Animation Studio',
     year: jikanItem.year || jikanItem.aired?.prop?.from?.year || 2024,
     format,
+    content_classification: directMatch?.content_classification || 'japanese_anime',
     status: jikanItem.airing ? 'Ongoing' : 'Completed',
-    episodes: isDirectPlayable ? directMatch.episodes : (jikanItem.episodes || (format === 'Movie' ? 1 : 12)),
+    episodes: isDirectPlayable ? directMatch.episodes : (jikanItem.episodes || null),
+    episodes_metadata_status: isDirectPlayable ? 'verified_in_app_streams' : 'catalog_count_only',
     score,
     rating: isAdult ? 'R+ 18+' : jikanItem.rating || 'PG-13',
     mature: isAdult,

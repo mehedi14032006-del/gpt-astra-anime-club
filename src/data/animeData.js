@@ -2,11 +2,13 @@
  * Curated Anime Library for Kitsune+ / GPT Astra Anime Club
  *
  * Implements strict anime-to-video source separation & content-type isolation:
- * 1. Verified Full-Length Playable Anime (`availability_type: 'direct-hd'`, `content_type: 'full_episode'`):
- *    11 productions (50+ distinct full-length TV episodes, OVAs, and feature films from 7m to 88m)
- *    with real verified durations read directly from the media stream.
+ * 1. Verified Full-Length Playable Productions (`availability_type: 'direct-hd'`, `content_type: 'full_episode'`):
+ *    11 productions (45+ distinct full-length TV episodes, OVAs, and feature films from 7m to 88m)
+ *    with real verified durations read directly from the media stream and explicit content classification
+ *    (`japanese_anime`, `asian_animation_heritage`, `open_source_animated_film`, `classic_theatrical_animation`).
  * 2. Licensed Partner Anime (`availability_type: 'licensed-partner'`, `content_type: 'external_licensed_episode'`):
- *    Point strictly to authorized external distributors (Crunchyroll, Netflix, HIDIVE, Muse Asia, Ani-One Asia).
+ *    Point strictly to authorized external distributors (Crunchyroll, Netflix, HIDIVE, Muse Asia, Ani-One Asia)
+ *    with explicit partner link classifications (`external_series_page` vs `provider_search_query`).
  *    Promotional trailers are kept strictly separate (`trailer_url`, `content_type: 'trailer'`) and NEVER
  *    assigned to `episode.stream_url` or `episode.embed_url`.
  */
@@ -17,7 +19,7 @@ export const SUBTITLE_TRACKS = DEFAULT_SUBTITLES;
 
 function buildPartnerSeasonsForTitle({
   animeId,
-  partnerUrl,
+  partnerSeriesUrl,
   providerName = 'Crunchyroll',
   seasonConfigs
 }) {
@@ -37,13 +39,16 @@ function buildPartnerSeasonsForTitle({
         duration: epMeta.broadcast_runtime || 'External Partner',
         duration_seconds: null, // Never hardcode a fake in-app duration for unhosted external episodes
         air_date: epMeta.air_date || `${sConfig.year || 2024}`,
-        audio_tracks: ['Japanese (Partner Stream)', 'English Dub (Partner Stream)'],
+        audio_tracks: [],
+        subtitle_status: 'Provided on External Partner Platform',
         stream_url: null, // Strictly null: No fake clip or fallback
         embed_url: null,  // Strictly null: Never assign a promotional trailer as an episode embed
-        external_episode_url: partnerUrl || null,
+        external_episode_url: epMeta.episode_url || null, // Only set if an exact episode URL is known
+        external_series_url: partnerSeriesUrl || null,
+        link_type: epMeta.episode_url ? 'external_episode_link' : 'external_series_page',
         provider_id: providerName,
         source_status: 'external-partner',
-        subtitles: SUBTITLE_TRACKS,
+        subtitles: [],
         is_preview_only: false
       };
     })
@@ -69,19 +74,19 @@ export const CURATED_ANIME = [
   // 6. Princess Iron Fan (1941) - Complete 73m Animated Feature & 24m Broadcast Cut
   VERIFIED_DIRECT_ANIME['3902'],
 
-  // 7. Sintel (The Dragon Warrior) - Complete 14m 48s Fantasy Film
+  // 7. Sintel - Complete 14m 48s Open-Source Animated Film (Blender Studio CC-BY 3.0)
   VERIFIED_DIRECT_ANIME['sintel-dragon-chronicles'],
 
-  // 8. Tears of Steel (Neo-Amsterdam Mecha) - Complete 12m 14s Sci-Fi Film
+  // 8. Tears of Steel - Complete 12m 14s Open-Source Sci-Fi Film (Blender Studio CC-BY 3.0)
   VERIFIED_DIRECT_ANIME['tears-of-steel'],
 
-  // 9. Elephants Dream (The Mechanical Labyrinth) - Complete 10m 54s Surreal Film
+  // 9. Elephants Dream - Complete 10m 54s Open-Source Surreal Film (Orange Studio CC-BY)
   VERIFIED_DIRECT_ANIME['elephants-dream'],
 
-  // 10. Popeye the Sailor (Complete Color Specials & Chronicles) - 5 Full 7m-22m Specials & Episodes
+  // 10. Popeye the Sailor (Fleischer Technicolor Specials) - 5 Full 7m-22m Public Domain Specials
   VERIFIED_DIRECT_ANIME['popeye-sailor-chronicles'],
 
-  // 11. Superman (The Complete Fleischer Series) - 6 Full 8m-10m Theatrical Episodes
+  // 11. Superman (Fleischer Theatrical Series 1941-1942) - 6 Full 8m-10m Public Domain Episodes
   VERIFIED_DIRECT_ANIME['superman-1941-fleischer'],
 
   // 12. Frieren: Beyond Journey's End - Licensed Partner Series
@@ -94,6 +99,7 @@ export const CURATED_ANIME = [
     studio: 'Madhouse',
     year: 2023,
     format: 'TV',
+    content_classification: 'japanese_anime',
     status: 'Completed',
     episodes: 28,
     score: 9.31,
@@ -102,7 +108,7 @@ export const CURATED_ANIME = [
     is_free: false,
     availability_type: 'licensed-partner',
     simulcast: true,
-    channel: 'Licensed Partner · Full Series on Crunchyroll & Netflix',
+    channel: 'Licensed Partner · Official Series on Crunchyroll & Netflix',
     genres: ['Adventure', 'Drama', 'Fantasy'],
     poster_url: 'https://cdn.myanimelist.net/images/anime/1015/138006l.jpg',
     banner_color: '#67e8f9',
@@ -112,18 +118,33 @@ export const CURATED_ANIME = [
     synopsis:
       'After a ten-year quest alongside the hero Himmel and his party, the elven mage Frieren defeats the Demon King and brings peace to the realm. Immortal and unhurried by human time, she embarks on a new journey to understand the fleeting hearts of the companions she once knew.',
     legal_links: [
-      { name: 'Crunchyroll (Full Episodes)', url: 'https://www.crunchyroll.com/series/GG5H5XMQ5/frieren-beyond-journeys-end', region: 'Global' },
-      { name: 'Netflix (Full Episodes)', url: 'https://www.netflix.com/title/81726714', region: 'Selected Regions' },
-      { name: 'Muse Asia (Licensed Regions)', url: 'https://www.youtube.com/@MuseAsia/search?query=Frieren', region: 'Asia' }
+      {
+        name: 'Crunchyroll (Official Series Page)',
+        url: 'https://www.crunchyroll.com/series/GG5H5XMQ5/frieren-beyond-journeys-end',
+        region: 'Global',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Netflix (Official Series Page)',
+        url: 'https://www.netflix.com/title/81726714',
+        region: 'Selected Regions',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Muse Asia (Channel Search)',
+        url: 'https://www.youtube.com/@MuseAsia/search?query=Frieren',
+        region: 'Asia',
+        link_type: 'provider_search_query'
+      }
     ],
     seasons: buildPartnerSeasonsForTitle({
       animeId: '52991',
-      partnerUrl: 'https://www.crunchyroll.com/series/GG5H5XMQ5/frieren-beyond-journeys-end',
+      partnerSeriesUrl: 'https://www.crunchyroll.com/series/GG5H5XMQ5/frieren-beyond-journeys-end',
       providerName: 'Crunchyroll',
       seasonConfigs: [
         {
           season_number: 1,
-          name: 'Season 1: Beyond Journey’s End (Licensed Partner)',
+          name: 'Season 1: Verified Broadcast Episode Guide (28 Total Episodes)',
           year: 2023,
           episodes: [
             { title: "The Journey's End", synopsis: 'The Hero Party returns victorious to the royal capital as a fifty-year meteor shower illuminates the sky.' },
@@ -146,6 +167,7 @@ export const CURATED_ANIME = [
     studio: 'A-1 Pictures',
     year: 2024,
     format: 'TV',
+    content_classification: 'japanese_anime',
     status: 'Ongoing',
     episodes: 25,
     score: 8.62,
@@ -154,7 +176,7 @@ export const CURATED_ANIME = [
     is_free: false,
     availability_type: 'licensed-partner',
     simulcast: true,
-    channel: 'Licensed Partner · Full Series on Crunchyroll',
+    channel: 'Licensed Partner · Official Series on Crunchyroll',
     genres: ['Action', 'Adventure', 'Fantasy'],
     poster_url: 'https://cdn.myanimelist.net/images/anime/1801/142390l.jpg',
     banner_color: '#818cf8',
@@ -164,11 +186,16 @@ export const CURATED_ANIME = [
     synopsis:
       'In a world where hunters must battle deadly monsters inside dimensional Gates, Sung Jinwoo—known as the weakest hunter of all mankind—survives a brutal double dungeon and awakens a secret System that allows him alone to level up without limit.',
     legal_links: [
-      { name: 'Crunchyroll (Full Episodes)', url: 'https://www.crunchyroll.com/series/GEXH3W20Z/solo-leveling', region: 'Global' }
+      {
+        name: 'Crunchyroll (Official Series Page)',
+        url: 'https://www.crunchyroll.com/series/GEXH3W20Z/solo-leveling',
+        region: 'Global',
+        link_type: 'external_series_page'
+      }
     ],
     seasons: buildPartnerSeasonsForTitle({
       animeId: '52299',
-      partnerUrl: 'https://www.crunchyroll.com/series/GEXH3W20Z/solo-leveling',
+      partnerSeriesUrl: 'https://www.crunchyroll.com/series/GEXH3W20Z/solo-leveling',
       providerName: 'Crunchyroll',
       seasonConfigs: [
         {
@@ -196,6 +223,7 @@ export const CURATED_ANIME = [
     studio: 'Wit Studio · CloverWorks',
     year: 2022,
     format: 'TV',
+    content_classification: 'japanese_anime',
     status: 'Completed',
     episodes: 37,
     score: 8.58,
@@ -204,7 +232,7 @@ export const CURATED_ANIME = [
     is_free: false,
     availability_type: 'licensed-partner',
     simulcast: false,
-    channel: 'Licensed Partner · Full Series on Crunchyroll & Muse Asia',
+    channel: 'Licensed Partner · Official Series on Crunchyroll & Muse Asia',
     genres: ['Action', 'Comedy'],
     poster_url: 'https://cdn.myanimelist.net/images/anime/1441/122795l.jpg',
     banner_color: '#fb7185',
@@ -214,12 +242,22 @@ export const CURATED_ANIME = [
     synopsis:
       'Master spy Twilight must build a fake family to infiltrate an elite private academy. Unbeknownst to him, the daughter he adopts is a telepath and the woman he agrees to marry is a lethal assassin.',
     legal_links: [
-      { name: 'Crunchyroll (Full Episodes)', url: 'https://www.crunchyroll.com/series/G4PH0WXPX/spy-x-family', region: 'Global' },
-      { name: 'Muse Asia (Full Episodes)', url: 'https://www.youtube.com/@MuseAsia/search?query=Spy+x+Family', region: 'Asia' }
+      {
+        name: 'Crunchyroll (Official Series Page)',
+        url: 'https://www.crunchyroll.com/series/G4PH0WXPX/spy-x-family',
+        region: 'Global',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Muse Asia (Channel Search)',
+        url: 'https://www.youtube.com/@MuseAsia/search?query=Spy+x+Family',
+        region: 'Asia',
+        link_type: 'provider_search_query'
+      }
     ],
     seasons: buildPartnerSeasonsForTitle({
       animeId: '50265',
-      partnerUrl: 'https://www.crunchyroll.com/series/G4PH0WXPX/spy-x-family',
+      partnerSeriesUrl: 'https://www.crunchyroll.com/series/G4PH0WXPX/spy-x-family',
       providerName: 'Crunchyroll',
       seasonConfigs: [
         {
@@ -245,6 +283,7 @@ export const CURATED_ANIME = [
     studio: 'Science SARU',
     year: 2024,
     format: 'TV',
+    content_classification: 'japanese_anime',
     status: 'Ongoing',
     episodes: 12,
     score: 8.75,
@@ -253,7 +292,7 @@ export const CURATED_ANIME = [
     is_free: false,
     availability_type: 'licensed-partner',
     simulcast: true,
-    channel: 'Licensed Partner · Full Series on Crunchyroll, Netflix & Muse Asia',
+    channel: 'Licensed Partner · Official Series on Crunchyroll, Netflix & Muse Asia',
     genres: ['Action', 'Comedy', 'Sci-Fi'],
     poster_url: 'https://cdn.myanimelist.net/images/anime/1584/143719l.jpg',
     banner_color: '#f43f5e',
@@ -263,13 +302,28 @@ export const CURATED_ANIME = [
     synopsis:
       'Momo Ayase believes in ghosts but not aliens, while her nerdy classmate Okarun believes in aliens but not ghosts. When they bet to prove each other wrong, both turn out to be terrifyingly real.',
     legal_links: [
-      { name: 'Crunchyroll (Full Episodes)', url: 'https://www.crunchyroll.com/series/GG5H5XQ87/dandadan', region: 'Global' },
-      { name: 'Netflix (Full Episodes)', url: 'https://www.netflix.com/title/81736884', region: 'Global' },
-      { name: 'Muse Asia (Full Episodes)', url: 'https://www.youtube.com/@MuseAsia/search?query=Dandadan', region: 'Asia' }
+      {
+        name: 'Crunchyroll (Official Series Page)',
+        url: 'https://www.crunchyroll.com/series/GG5H5XQ87/dandadan',
+        region: 'Global',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Netflix (Official Series Page)',
+        url: 'https://www.netflix.com/title/81736884',
+        region: 'Global',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Muse Asia (Channel Search)',
+        url: 'https://www.youtube.com/@MuseAsia/search?query=Dandadan',
+        region: 'Asia',
+        link_type: 'provider_search_query'
+      }
     ],
     seasons: buildPartnerSeasonsForTitle({
       animeId: '57334',
-      partnerUrl: 'https://www.crunchyroll.com/series/GG5H5XQ87/dandadan',
+      partnerSeriesUrl: 'https://www.crunchyroll.com/series/GG5H5XQ87/dandadan',
       providerName: 'Crunchyroll',
       seasonConfigs: [
         {
@@ -295,6 +349,7 @@ export const CURATED_ANIME = [
     studio: 'MAPPA',
     year: 2022,
     format: 'TV',
+    content_classification: 'japanese_anime',
     status: 'Completed',
     episodes: 12,
     score: 8.48,
@@ -303,7 +358,7 @@ export const CURATED_ANIME = [
     is_free: false,
     availability_type: 'licensed-partner',
     simulcast: false,
-    channel: 'Licensed Partner · Full Series on Crunchyroll & Hulu',
+    channel: 'Licensed Partner · Official Series on Crunchyroll & Hulu',
     genres: ['Action', 'Fantasy', 'Horror'],
     poster_url: 'https://cdn.myanimelist.net/images/anime/1806/126216l.jpg',
     banner_color: '#ef4444',
@@ -313,12 +368,22 @@ export const CURATED_ANIME = [
     synopsis:
       'Living in poverty to pay off his deceased father’s debt to the yakuza, Denji works alongside chainsaw devil Pochita until a betrayal leaves him slaughtered. Pochita merges with Denji’s heart to revive him as Chainsaw Man.',
     legal_links: [
-      { name: 'Crunchyroll (Full Episodes)', url: 'https://www.crunchyroll.com/series/GVDHXJ76E/chainsaw-man', region: 'Global' },
-      { name: 'Hulu (Full Episodes)', url: 'https://www.hulu.com/series/chainsaw-man', region: 'US' }
+      {
+        name: 'Crunchyroll (Official Series Page)',
+        url: 'https://www.crunchyroll.com/series/GVDHXJ76E/chainsaw-man',
+        region: 'Global',
+        link_type: 'external_series_page'
+      },
+      {
+        name: 'Hulu (Official Series Page)',
+        url: 'https://www.hulu.com/series/chainsaw-man',
+        region: 'US',
+        link_type: 'external_series_page'
+      }
     ],
     seasons: buildPartnerSeasonsForTitle({
       animeId: '44511',
-      partnerUrl: 'https://www.crunchyroll.com/series/GVDHXJ76E/chainsaw-man',
+      partnerSeriesUrl: 'https://www.crunchyroll.com/series/GVDHXJ76E/chainsaw-man',
       providerName: 'Crunchyroll',
       seasonConfigs: [
         {

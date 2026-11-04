@@ -640,9 +640,10 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
   const legalLinks = (media.externalLinks || [])
     .filter((l) => ['Crunchyroll', 'Netflix', 'Hulu', 'YouTube', 'Amazon', 'HIDIVE', 'Disney Plus', 'Funimation'].some(s => l.site?.includes(s)))
     .map((l) => ({
-      name: l.site,
+      name: `${l.site} (Official Series Page)`,
       url: l.url,
-      region: 'Official Streaming License'
+      region: 'Official Streaming License',
+      link_type: 'external_series_page'
     }));
 
   if (legalLinks.length === 0 && directMatch?.legal_links) {
@@ -663,16 +664,16 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
     : 'licensed-partner';
 
   const availabilityReason = isDirectPlayable
-    ? 'Verified full-length episode streams available in-app with multi-language subtitles.'
+    ? 'Verified full-length episode streams available in-app.'
     : `Full-length episodes are distributed on official licensed partner platforms (${legalLinks.map(l => l.name).slice(0, 3).join(', ') || 'Crunchyroll, Netflix'}). Promotional trailers are strictly separated and never substituted for full episodes.`;
 
-  // Build seasons: either curated direct stream seasons or metadata episode list
+  // Build seasons: either curated direct stream seasons or verified streamingEpisodes from AniList.
+  // CRITICAL: Never fabricate placeholder episodes to match an advertised episode count when episode records are unavailable.
   let seasons = [];
+  const streamingEps = Array.isArray(media.streamingEpisodes) ? media.streamingEpisodes : [];
   if (isDirectPlayable && directMatch.seasons) {
     seasons = directMatch.seasons;
-  } else {
-    const streamingEps = Array.isArray(media.streamingEpisodes) ? media.streamingEpisodes : [];
-    const totalEps = Math.min(24, Math.max(1, media.episodes || streamingEps.length || (format === 'Movie' ? 1 : 12)));
+  } else if (streamingEps.length > 0) {
     const broadcastRuntimeLabel = media.duration
       ? `${media.duration}m (Broadcast)`
       : 'External Partner';
@@ -680,10 +681,9 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
     seasons = [
       {
         season_number: 1,
-        name: `${format === 'Movie' ? 'Feature Film' : 'Season 1'}`,
+        name: `${format === 'Movie' ? 'Feature Film' : 'Season 1 (Verified Partner Guide)'}`,
         year: media.seasonYear || 2024,
-        episodes: Array.from({ length: totalEps }).map((_, i) => {
-          const streamEp = streamingEps[i];
+        episodes: streamingEps.map((streamEp, i) => {
           const epTitle = streamEp?.title || `Episode ${i + 1}`;
           return {
             episode_id: `${idStr}:s1:e${i + 1}`,
@@ -693,12 +693,14 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
             title: epTitle,
             duration: broadcastRuntimeLabel,
             duration_seconds: null, // Never fabricate a fake in-app duration for unhosted external episodes
-            synopsis: `Official episode ${i + 1} of ${titleEnglish}. Full-length episode available on authorized legal streaming partners.`,
+            synopsis: `Verified partner episode listing for ${titleEnglish} (${streamEp?.site || 'Official Distributor'}).`,
             stream_url: null,
             embed_url: null, // Strictly null: never assign a promotional trailer URL as an episode source
             external_episode_url: streamEp?.url || null,
+            link_type: streamEp?.url ? 'external_episode_link' : 'external_series_page',
             provider_id: streamEp?.site || 'licensed-partner',
             source_status: 'external-partner',
+            subtitles: [],
             is_preview_only: false
           };
         })
@@ -716,8 +718,14 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
     studio: studioName,
     year: media.seasonYear || media.startDate?.year || directMatch?.year || 2024,
     format,
+    content_classification: directMatch?.content_classification || 'japanese_anime',
     status: media.status === 'RELEASING' ? 'Ongoing' : media.status === 'NOT_YET_RELEASED' ? 'Upcoming' : 'Completed',
-    episodes: isDirectPlayable ? directMatch.episodes : (media.episodes || (format === 'Movie' ? 1 : 12)),
+    episodes: isDirectPlayable ? directMatch.episodes : (media.episodes || streamingEps.length || null),
+    episodes_metadata_status: isDirectPlayable
+      ? 'verified_in_app_streams'
+      : streamingEps.length > 0
+      ? 'verified_partner_episodes'
+      : 'catalog_count_only',
     score,
     rating: media.isAdult ? 'R+ 18+' : directMatch?.rating || 'PG-13',
     mature: Boolean(media.isAdult),
@@ -733,6 +741,7 @@ export function mapAniListMediaToAnime(media, curatedDirectMatches = {}) {
     free_url: directMatch?.free_url || '',
     trailer_url: trailerUrl,
     trailer_content_type: trailerUrl ? 'trailer' : null,
+    legal_links: legalLinks,
     synopsis: cleanSynopsis || directMatch?.synopsis || 'Synopsis currently being updated from official sources.',
     seasons,
     characters: media.characters?.edges || [],

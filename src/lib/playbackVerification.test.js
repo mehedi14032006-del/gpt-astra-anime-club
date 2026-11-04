@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveEpisodeVideo, VERIFIED_DIRECT_ANIME } from './videoRegistry.js';
+import {
+  resolveEpisodeVideo,
+  resolveEpisodeVideoSync,
+  VERIFIED_DIRECT_ANIME,
+  DEFAULT_SUBTITLES,
+  classifyPartnerLinks
+} from './videoRegistry.js';
 import { CURATED_ANIME } from '../data/animeData.js';
 import { mapAniListMediaToAnime } from './anilistClient.js';
 import {
@@ -40,6 +46,84 @@ describe('Mandatory Full-Length Anime Episode Playback & Anti-Trailer Verificati
     assert.notEqual(ep1.streamUrl, ep2.streamUrl);
     assert.notEqual(ep2.streamUrl, ep12.streamUrl);
     assert.notEqual(ep1.mediaSourceId, ep2.mediaSourceId);
+  });
+
+  // Strict Anti-Fallback Test: Missing Episode or Season NEVER falls back to Episode 1
+  it('Strict Anti-Fallback: Requesting a missing episode or season never falls back to Season 1 Episode 1', async () => {
+    const missingEp = await resolveEpisodeVideo({
+      anime: VERIFIED_DIRECT_ANIME['1572'],
+      seasonNumber: 1,
+      episodeNumber: 99
+    });
+    assert.equal(missingEp.available, false);
+    assert.equal(missingEp.sourceStatus, 'episode-missing');
+    assert.equal(missingEp.streamUrl, null, 'Missing episode 99 must NEVER return Episode 1 stream URL');
+    assert.equal(missingEp.episodeNumber, 99);
+
+    const missingSeason = await resolveEpisodeVideo({
+      anime: VERIFIED_DIRECT_ANIME['1572'],
+      seasonNumber: 4,
+      episodeNumber: 1
+    });
+    assert.equal(missingSeason.available, false);
+    assert.equal(missingSeason.sourceStatus, 'season-missing');
+    assert.equal(missingSeason.streamUrl, null, 'Missing Season 4 must NEVER return Season 1 Episode 1 stream URL');
+    assert.equal(missingSeason.seasonNumber, 4);
+
+    const syncMissing = resolveEpisodeVideoSync({
+      anime: VERIFIED_DIRECT_ANIME['1572'],
+      seasonNumber: 1,
+      episodeNumber: 42
+    });
+    assert.equal(syncMissing.available, false);
+    assert.equal(syncMissing.streamUrl, null);
+    assert.equal(syncMissing.sourceStatus, 'episode-missing');
+  });
+
+  // Authentic Subtitle & Audio Verification (Zero Universal Fictional VTT Files)
+  it('Authentic Subtitle & Audio: Universal fictional VTT subtitles are removed and episodes report true audio/subtitle metadata', async () => {
+    assert.deepEqual(DEFAULT_SUBTITLES, [], 'DEFAULT_SUBTITLES must be empty so universal fictional VTT files are never attached');
+
+    const leoEp1 = await resolveEpisodeVideo({
+      anime: VERIFIED_DIRECT_ANIME['1572'],
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    assert.deepEqual(leoEp1.subtitles, []);
+    assert.match(leoEp1.subtitleStatus, /Burned-in English Subtitles/i);
+    assert.ok(Array.isArray(leoEp1.audioTracks) && leoEp1.audioTracks.length > 0);
+    assert.match(leoEp1.audioTracks[0], /Japanese/i);
+  });
+
+  // Source Verification Metadata & Content Classification
+  it('Video Source Registry: Every verified entry contains verification metadata and explicit content_classification', () => {
+    for (const [id, entry] of Object.entries(VERIFIED_DIRECT_ANIME)) {
+      assert.ok(entry.content_classification, `Entry ${id} must declare content_classification`);
+      assert.ok(entry.verification, `Entry ${id} must include verification metadata`);
+      assert.equal(entry.verification.http_status, 200);
+      assert.equal(entry.verification.mime_type, 'video/mp4');
+      assert.ok(entry.verification.verified_at);
+      assert.ok(entry.verification.provider_identity);
+
+      for (const season of entry.seasons || []) {
+        for (const ep of season.episodes || []) {
+          assert.ok(ep.verification, `Episode ${ep.id} must include verification metadata`);
+          assert.equal(ep.verification.http_status, 200);
+          assert.ok(ep.subtitle_status, `Episode ${ep.id} must declare subtitle_status`);
+          assert.ok(Array.isArray(ep.audio_tracks) && ep.audio_tracks.length > 0, `Episode ${ep.id} must declare audio_tracks`);
+        }
+      }
+    }
+  });
+
+  // Partner Link Classification
+  it('Partner Link Classification distinguishes series pages from provider search queries', () => {
+    const classified = classifyPartnerLinks([
+      { name: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GG5H5XQX4/frieren-beyond-journeys-end' },
+      { name: 'Netflix Search', url: 'https://www.netflix.com/search?q=Frieren' }
+    ]);
+    assert.equal(classified[0].link_type, 'external_series_page');
+    assert.equal(classified[1].link_type, 'provider_search_query');
   });
 
   // Title 2: Shin Tetsujin 28-gō (1980) - 8 Complete ~21m TV Anime Episodes
@@ -162,6 +246,7 @@ describe('Mandatory Full-Length Anime Episode Playback & Anti-Trailer Verificati
     assert.equal(ep1.durationSeconds, 888);
     assert.equal(ep2.durationSeconds, 888);
     assert.notEqual(ep1.streamUrl, ep2.streamUrl);
+    assert.equal(VERIFIED_DIRECT_ANIME['sintel-dragon-chronicles'].content_classification, 'open_source_animated_film');
   });
 
   // Title 8: Tears of Steel & Elephants Dream (Complete 12m 14s and 10m 54s films)
@@ -207,6 +292,7 @@ describe('Mandatory Full-Length Anime Episode Playback & Anti-Trailer Verificati
     assert.equal(popeye3.durationSeconds, 1306);
     assert.equal(superman1.available, true);
     assert.equal(superman1.durationSeconds, 621);
+    assert.equal(VERIFIED_DIRECT_ANIME['superman-1941-fleischer'].content_classification, 'classic_theatrical_animation');
   });
 
   // Title 10: Frieren (Licensed Partner) - Never assigns trailer as episode embedUrl
@@ -243,15 +329,18 @@ describe('Mandatory Full-Length Anime Episode Playback & Anti-Trailer Verificati
     }
   });
 
-  // Title 12: Unhosted AniList Titles (Boku no Pico & Taboo Charming Mother)
-  it('Title 12: Unhosted AniList titles resolve to external_licensed_episode with null streamUrl and null embedUrl', async () => {
+  // Title 12: Unhosted AniList Titles (Boku no Pico & Taboo Charming Mother) do NOT fabricate placeholder episodes
+  it('Title 12: Unhosted AniList & Jikan titles do not fabricate placeholder episodes and resolve to unavailable', async () => {
     const bokuNoPico = mapAniListMediaToAnime({
       id: 539,
       title: { english: 'Boku no Pico', romaji: 'Boku no Pico' },
       isAdult: true,
-      episodes: 1,
+      episodes: 3,
       duration: 34
     });
+
+    assert.equal(bokuNoPico.episodes_metadata_status, 'catalog_count_only');
+    assert.equal(bokuNoPico.seasons.length, 0, 'Must not fabricate placeholder Episode 1..3 records when streamingEpisodes are absent');
 
     const res = await resolveEpisodeVideo({
       anime: bokuNoPico,
@@ -287,3 +376,4 @@ describe('Mandatory Full-Length Anime Episode Playback & Anti-Trailer Verificati
     assert.equal(normalizeTitleKey("Frieren: Beyond Journey's End!"), 'frierenbeyondjourneysend');
   });
 });
+

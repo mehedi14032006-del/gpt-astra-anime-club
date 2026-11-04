@@ -474,7 +474,7 @@ export function AnimeDetailModal({
               <div className="flex items-center justify-between">
                 <p className="text-xs text-[#94A3B8]">
                   {activeAnime.availability_type === 'direct-hd'
-                    ? 'Verified full-length episode streams available directly in-app with subtitles. Promotional trailers are strictly separated.'
+                    ? 'Verified full-length episode streams available directly in-app. Promotional trailers are strictly separated.'
                     : 'Official episode directory. Full-length episodes are hosted on authorized streaming partner platforms.'}
                 </p>
                 <button
@@ -491,49 +491,60 @@ export function AnimeDetailModal({
                 </button>
               </div>
 
-              <div className="divide-y divide-white/5 rounded-xl border border-white/10 bg-[#161420] overflow-hidden">
-                {activeAnime.seasons?.[0]?.episodes?.map((ep, idx) => {
-                  const hasFullEpisodeStream = Boolean(ep.stream_url && ep.content_type !== 'trailer');
-                  return (
-                    <div
-                      key={`detail-ep-${ep.season || 1}-${ep.ep}-${idx}`}
-                      className="p-3 sm:p-4 flex items-center justify-between gap-4 hover:bg-white/5 transition"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center font-mono text-xs font-bold text-[#F43F5E] shrink-0">
-                          {ep.ep}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-xs sm:text-sm font-semibold text-white truncate">
-                            {ep.title}
+              {(activeAnime.seasons?.[0]?.episodes?.length || 0) === 0 ? (
+                <div className="rounded-xl border border-white/10 bg-[#161420] p-6 text-xs text-[#94A3B8] space-y-2">
+                  <div className="font-bold text-white text-sm">
+                    Catalog Episode Count: {activeAnime.episodes || 'TBA'} ({activeAnime.format || 'TV'})
+                  </div>
+                  <p className="leading-relaxed">
+                    AniList public metadata confirms this production has {activeAnime.episodes || 'multiple'} episodes, but individual episode-by-episode streaming records were not returned by the API. Kitsune+ never fabricates placeholder episode titles or fake synopses. Use the official distributor links or open the Screening Room for partner access.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5 rounded-xl border border-white/10 bg-[#161420] overflow-hidden">
+                  {activeAnime.seasons?.[0]?.episodes?.map((ep, idx) => {
+                    const hasFullEpisodeStream = Boolean(ep.stream_url && ep.content_type !== 'trailer');
+                    return (
+                      <div
+                        key={`detail-ep-${ep.season || 1}-${ep.ep}-${idx}`}
+                        className="p-3 sm:p-4 flex items-center justify-between gap-4 hover:bg-white/5 transition"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center font-mono text-xs font-bold text-[#F43F5E] shrink-0">
+                            {ep.ep}
                           </div>
-                          <p className="text-xs text-[#94A3B8] line-clamp-1 mt-0.5">
-                            {ep.synopsis}
-                          </p>
+                          <div className="min-w-0">
+                            <div className="text-xs sm:text-sm font-semibold text-white truncate">
+                              {ep.title}
+                            </div>
+                            <p className="text-xs text-[#94A3B8] line-clamp-1 mt-0.5">
+                              {ep.synopsis}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-mono text-[#94A3B8]">{ep.duration}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onOpenScreeningRoom?.(activeAnime, ep.season || 1, ep.ep);
+                              onClose?.();
+                            }}
+                            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                              hasFullEpisodeStream
+                                ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+                                : 'border-white/15 bg-white/5 text-white hover:bg-white/10'
+                            }`}
+                          >
+                            {hasFullEpisodeStream ? '▶ Play Full Episode' : '🌐 Partner Access'}
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-mono text-[#94A3B8]">{ep.duration}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onOpenScreeningRoom?.(activeAnime, ep.season || 1, ep.ep);
-                            onClose?.();
-                          }}
-                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
-                            hasFullEpisodeStream
-                              ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
-                              : 'border-white/15 bg-white/5 text-white hover:bg-white/10'
-                          }`}
-                        >
-                          {hasFullEpisodeStream ? '▶ Play Full Episode' : '🌐 Partner Access'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

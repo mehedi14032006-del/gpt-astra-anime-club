@@ -5,19 +5,25 @@ import {
   getAnimeSeasons,
   formatTimestamp
 } from '../lib/catalogLogic.js';
-import { formatDurationSeconds } from '../lib/videoRegistry.js';
-import { SUBTITLE_TRACKS } from '../data/animeData.js';
+import {
+  formatDurationSeconds,
+  resolveEpisodeVideoSync,
+  resolveEpisodeVideo
+} from '../lib/videoRegistry.js';
 
 /**
  * ScreeningModal
  * Production-ready Full-Episode Anime Screening Room:
+ * - Centralized Playback Resolution: Every selection resolves strictly through
+ *   `resolveEpisodeVideoSync` / `resolveEpisodeVideo`:
+ *   `Anime ID -> Season ID -> Episode ID -> Authorized Provider -> Verified Media Source`.
+ * - Zero Fallback-to-Episode-1: Requesting a missing season or episode NEVER falls back to
+ *   Season 1 or Episode 1; it displays an honest Episode Unavailable notice for that exact selection.
  * - Strict Content-Type Separation: Full-length episodes (`content_type: 'full_episode'`) are strictly
  *   separated from promotional trailers (`content_type: 'trailer'`).
- * - Never Uses a Trailer as an Episode Source: Clicking Episode 1, 2, 3... NEVER loads a 1-minute trailer.
- *   If a full-length in-app stream is hosted, it plays the complete episode (10m–88m). If unhosted, it
- *   displays an honest Episode Availability & Authorized Partner Access panel for that exact episode.
- * - Real Media Duration: Reads the actual duration (`vid.duration`) directly from the verified HTML5
- *   video stream on `loadedmetadata` / `durationchange`—never hardcoding a fake 24-minute or 1-minute clip.
+ * - Authentic Audio & Subtitles: Never attaches universal fictional VTT files across titles.
+ * - Real Media Duration: Reads actual duration (`vid.duration`) directly from the verified HTML5
+ *   video stream on `loadedmetadata` / `durationchange`.
  */
 export function ScreeningModal({
   anime,
@@ -32,44 +38,77 @@ export function ScreeningModal({
   const availability = getAvailabilityStatus(anime);
   const seasons = getAnimeSeasons(anime);
 
-  const [selectedSeasonNum, setSelectedSeasonNum] = useState(
-    savedProgress?.seasonNumber || initialSeasonNumber || seasons[0]?.season_number || 1
-  );
+  // Use exact requested season/episode; only use savedProgress if caller did not explicitly specify a different target
+  const [selectedSeasonNum, setSelectedSeasonNum] = useState(() => {
+    if (initialSeasonNumber !== undefined && initialSeasonNumber !== null) {
+      return Number(initialSeasonNumber);
+    }
+    return Number(savedProgress?.seasonNumber || seasons[0]?.season_number || 1);
+  });
 
+  const [selectedEp, setSelectedEp] = useState(() => {
+    if (initialEpisodeNumber !== undefined && initialEpisodeNumber !== null) {
+      return Number(initialEpisodeNumber);
+    }
+    return Number(savedProgress?.episodeNumber || 1);
+  });
+
+  // STRICT EXACT LOOKUP: Never fall back to seasons[0] or episodes[0]!
   const activeSeason =
-    seasons.find((s) => s.season_number === Number(selectedSeasonNum)) ||
-    seasons[0] || { season_number: 1, name: 'Season 1', episodes: [] };
+    seasons.find((s) => Number(s.season_number) === Number(selectedSeasonNum)) || null;
+  const episodes = activeSeason?.episodes || [];
+  const exactEpObj =
+    episodes.find((e) => Number(e.ep) === Number(selectedEp)) || null;
 
-  const episodes = activeSeason.episodes || [];
+  // Centralized playback resolution (synchronous baseline + async Supabase/registry verification with race guard)
+  const syncResolution = resolveEpisodeVideoSync({
+    anime,
+    seasonNumber: selectedSeasonNum,
+    episodeNumber: selectedEp
+  });
 
-  const [selectedEp, setSelectedEp] = useState(
-    savedProgress?.episodeNumber || initialEpisodeNumber || 1
-  );
+  const [asyncResolution, setAsyncResolution] = useState(null);
+  const requestVersionRef = useRef(0);
 
-  const currentEpObj =
-    episodes.find((e) => e.ep === selectedEp) ||
-    episodes[0] || {
-      ep: selectedEp,
-      content_type: 'external_licensed_episode',
-      title: `Episode ${selectedEp}`,
-      duration: 'External Partner',
-      duration_seconds: null,
-      stream_url: null,
-      embed_url: null,
-      subtitles: []
-    };
+  useEffect(() => {
+    requestVersionRef.current += 1;
+    const currentVersion = requestVersionRef.current;
+    setAsyncResolution(null);
 
-  const currentEpIndex = Math.max(0, episodes.findIndex((e) => e.ep === selectedEp));
+    resolveEpisodeVideo({
+      anime,
+      seasonNumber: selectedSeasonNum,
+      episodeNumber: selectedEp
+    })
+      .then((res) => {
+        if (requestVersionRef.current === currentVersion) {
+          setAsyncResolution(res);
+        }
+      })
+      .catch(() => {
+        // Fallback to syncResolution
+      });
+  }, [anime, selectedSeasonNum, selectedEp]);
 
-  // Genuine full-episode stream source for this exact episode (never a trailer or another anime)
+  const resolvedPlayback =
+    asyncResolution &&
+    asyncResolution.episodeId === syncResolution.episodeId
+      ? asyncResolution
+      : syncResolution;
+
+  const currentEpIndex = episodes.findIndex((e) => Number(e.ep) === Number(selectedEp));
+
+  // Genuine full-episode stream source for this exact episode (never a trailer or Episode 1 fallback)
   const directVideoSrc =
-    currentEpObj.content_type !== 'trailer' && currentEpObj.stream_url
-      ? currentEpObj.stream_url
+    resolvedPlayback.available &&
+    resolvedPlayback.contentType === 'full_episode' &&
+    resolvedPlayback.streamUrl
+      ? resolvedPlayback.streamUrl
       : null;
   const hasDirectStream = Boolean(directVideoSrc);
 
   // Promotional trailer is strictly separated at the anime metadata level (`content_type: 'trailer'`)
-  const trailerRawUrl = anime?.trailer_url || null;
+  const trailerRawUrl = resolvedPlayback.officialTrailer || anime?.trailer_url || null;
   const trailerEmbedConfig = resolveEmbedSource(trailerRawUrl, 0);
   const hasTrailer = Boolean(trailerEmbedConfig.src);
 
@@ -77,8 +116,17 @@ export function ScreeningModal({
   // NEVER auto-plays a promotional trailer pretending to be that episode.
   const [sourceMode, setSourceMode] = useState('direct');
 
-  const [audioTrack, setAudioTrack] = useState('JP');
-  const [subtitleLang, setSubtitleLang] = useState('en');
+  const verifiedAudioTracks = Array.isArray(resolvedPlayback.audioTracks) && resolvedPlayback.audioTracks.length > 0
+    ? resolvedPlayback.audioTracks
+    : ['Original Broadcast Audio'];
+  const verifiedSubtitles = Array.isArray(resolvedPlayback.subtitles)
+    ? resolvedPlayback.subtitles
+    : [];
+
+  const [selectedAudioIdx, setSelectedAudioIdx] = useState(0);
+  const [subtitleLang, setSubtitleLang] = useState(
+    verifiedSubtitles[0]?.srcLang || 'off'
+  );
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // Real HTML5 <video> state
@@ -86,10 +134,10 @@ export function ScreeningModal({
   const stageRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(currentEpObj.duration_seconds || 0);
+  const [duration, setDuration] = useState(resolvedPlayback.durationSeconds || 0);
   const [verifiedStreamDuration, setVerifiedStreamDuration] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(0.85);
+  const [volume] = useState(0.85);
   const [isBuffering, setIsBuffering] = useState(false);
   const [videoError, setVideoError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -97,21 +145,30 @@ export function ScreeningModal({
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Canonical unique identifiers for strict 1-to-1 verification
-  const canonicalAnimeId = String(anime?.id || anime?.anilist_id || '');
-  const canonicalSeasonId = `${canonicalAnimeId}:s${selectedSeasonNum}`;
-  const canonicalEpisodeId = currentEpObj.episode_id || `${canonicalSeasonId}:e${selectedEp}`;
-  const canonicalContentType = hasDirectStream ? 'full_episode' : 'external_licensed_episode';
+  const canonicalAnimeId = resolvedPlayback.animeId || String(anime?.id || anime?.anilist_id || '');
+  const canonicalSeasonId = resolvedPlayback.seasonId || `${canonicalAnimeId}:s${selectedSeasonNum}`;
+  const canonicalEpisodeId = resolvedPlayback.episodeId || `${canonicalSeasonId}:e${selectedEp}`;
+  const canonicalContentType = resolvedPlayback.contentType || 'unavailable';
 
   // Reset player state whenever anime, season, or episode changes so no previous stream is retained
   useEffect(() => {
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {
+        // ignore
+      }
+    }
     setVideoError(null);
     setRetryCount(0);
     setIsBuffering(false);
     setCurrentTime(0);
     setVerifiedStreamDuration(null);
-    setDuration(currentEpObj.duration_seconds || 0);
+    setDuration(resolvedPlayback.durationSeconds || 0);
+    setSelectedAudioIdx(0);
+    setSubtitleLang(verifiedSubtitles[0]?.srcLang || 'off');
     setSourceMode('direct');
-  }, [anime?.id, selectedSeasonNum, selectedEp, currentEpObj.duration_seconds]);
+  }, [anime?.id, selectedSeasonNum, selectedEp, resolvedPlayback.durationSeconds, verifiedSubtitles.length]);
 
   // Sync playbackRate with <video>
   useEffect(() => {
@@ -177,7 +234,7 @@ export function ScreeningModal({
     const actualMediaDuration =
       Number.isFinite(vid.duration) && vid.duration > 0
         ? Math.round(vid.duration)
-        : currentEpObj.duration_seconds || 0;
+        : resolvedPlayback.durationSeconds || 0;
 
     setDuration(actualMediaDuration);
     if (Number.isFinite(vid.duration) && vid.duration > 0) {
@@ -241,7 +298,7 @@ export function ScreeningModal({
         episodeNumber: selectedEp,
         resumeSeconds: Math.floor(nowSec),
         durationSeconds: Math.floor(durSec),
-        episodeTitle: currentEpObj.title
+        episodeTitle: resolvedPlayback.episodeTitle
       });
     }
   };
@@ -266,8 +323,9 @@ export function ScreeningModal({
   };
 
   const handleSeasonChange = (seasonNum) => {
-    setSelectedSeasonNum(seasonNum);
-    const targetSeasonObj = seasons.find((s) => s.season_number === seasonNum);
+    const nextSeasonNum = Number(seasonNum);
+    setSelectedSeasonNum(nextSeasonNum);
+    const targetSeasonObj = seasons.find((s) => Number(s.season_number) === nextSeasonNum);
     const firstEpOfSeason = targetSeasonObj?.episodes?.[0]?.ep || 1;
     setSelectedEp(firstEpOfSeason);
     setCurrentTime(0);
@@ -276,7 +334,7 @@ export function ScreeningModal({
   };
 
   const handleEpisodePick = (epItem) => {
-    setSelectedEp(epItem.ep);
+    setSelectedEp(Number(epItem.ep));
     setCurrentTime(0);
     setResumedBanner('');
     setSourceMode('direct');
@@ -299,7 +357,7 @@ export function ScreeningModal({
   };
 
   const handleNextEpisode = () => {
-    if (currentEpIndex < episodes.length - 1) {
+    if (currentEpIndex >= 0 && currentEpIndex < episodes.length - 1) {
       handleEpisodePick(episodes[currentEpIndex + 1]);
     }
   };
@@ -317,15 +375,24 @@ export function ScreeningModal({
 
   const displayedRuntimeLabel = verifiedStreamDuration
     ? formatDurationSeconds(verifiedStreamDuration)
-    : currentEpObj.duration_seconds
-    ? formatDurationSeconds(currentEpObj.duration_seconds)
-    : currentEpObj.duration || 'External Partner';
+    : resolvedPlayback.durationSeconds
+    ? formatDurationSeconds(resolvedPlayback.durationSeconds)
+    : exactEpObj?.duration || 'External Partner';
+
+  const currentEpTitle =
+    resolvedPlayback.episodeTitle ||
+    exactEpObj?.title ||
+    `Episode ${selectedEp}`;
 
   const defaultCrunchyrollSearch = `https://www.crunchyroll.com/search?q=${encodeURIComponent(`${anime.title} episode ${selectedEp}`)}`;
   const defaultNetflixSearch = `https://www.netflix.com/search?q=${encodeURIComponent(anime.title)}`;
   const defaultHidiveSearch = `https://www.hidive.com/search?q=${encodeURIComponent(anime.title)}`;
   const defaultMuseAsiaSearch = `https://www.youtube.com/@MuseAsia/search?query=${encodeURIComponent(anime.title)}`;
   const defaultAniOneSearch = `https://www.youtube.com/@AniOneAsia/search?query=${encodeURIComponent(anime.title)}`;
+
+  const isMissingExactEpisodeOrSeason =
+    resolvedPlayback.sourceStatus === 'season-missing' ||
+    resolvedPlayback.sourceStatus === 'episode-missing';
 
   return (
     <div
@@ -343,6 +410,8 @@ export function ScreeningModal({
                 <span className={hasDirectStream ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
                   {hasDirectStream
                     ? `Full-Length Episode Stream (${displayedRuntimeLabel})`
+                    : isMissingExactEpisodeOrSeason
+                    ? `Episode Unavailable (${resolvedPlayback.sourceStatus})`
                     : 'External Licensed Episode · No In-App Video File'}
                 </span>
                 <span>·</span>
@@ -362,7 +431,7 @@ export function ScreeningModal({
                 id="screening-room-title"
                 className="text-sm sm:text-lg font-bold tracking-tight text-white truncate mt-0.5"
               >
-                {anime.title} — <span className="text-[#94A3B8] font-normal">{currentEpObj.title}</span>
+                {anime.title} — <span className="text-[#94A3B8] font-normal">{currentEpTitle}</span>
               </h2>
             </div>
 
@@ -426,10 +495,15 @@ export function ScreeningModal({
         <div className="grid grid-cols-1 lg:grid-cols-12 overflow-y-auto flex-1">
           {/* Left 8 Cols: Video Stage + Controls Shelf + Synopsis */}
           <div className="lg:col-span-8 flex flex-col border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0B0A0E]">
-            {/* 16:9 Video Stage */}
+            {/* 16:9 Video Stage (expands vertically on mobile when showing text/button notice panels) */}
             <div
               ref={stageRef}
-              className="relative w-full aspect-video bg-black overflow-hidden select-none"
+              className={`relative w-full bg-black select-none ${
+                (sourceMode === 'direct' && hasDirectStream) ||
+                (sourceMode === 'trailer' && trailerEmbedConfig.type === 'iframe')
+                  ? 'aspect-video overflow-hidden'
+                  : 'min-h-[260px] lg:aspect-video overflow-visible'
+              }`}
             >
               {sourceMode === 'partner-notice' ? (
                 /* Licensed Partner Availability Notice */
@@ -453,14 +527,14 @@ export function ScreeningModal({
                         ▶ Watch Full Episode {selectedEp} ({displayedRuntimeLabel})
                       </button>
                     )}
-                    {currentEpObj.external_episode_url && (
+                    {resolvedPlayback.externalEpisodeUrl && (
                       <a
-                        href={currentEpObj.external_episode_url}
+                        href={resolvedPlayback.externalEpisodeUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] px-4 py-2 text-xs sm:text-sm font-bold text-white transition"
                       >
-                        ▶ Watch Ep {selectedEp} on {currentEpObj.provider_id || 'Official Partner'} ↗
+                        ▶ Open Ep {selectedEp} Page on {resolvedPlayback.providerId || 'Official Partner'} ↗
                       </a>
                     )}
                     <a
@@ -469,7 +543,7 @@ export function ScreeningModal({
                       rel="noopener noreferrer"
                       className="rounded-lg border border-white/20 bg-white/5 hover:bg-white/10 px-4 py-2 text-xs sm:text-sm font-medium text-white transition"
                     >
-                      Crunchyroll ↗
+                      Search on Crunchyroll ↗
                     </a>
                     <a
                       href={defaultNetflixSearch}
@@ -477,7 +551,7 @@ export function ScreeningModal({
                       rel="noopener noreferrer"
                       className="rounded-lg border border-white/20 bg-white/5 hover:bg-white/10 px-4 py-2 text-xs sm:text-sm font-medium text-white transition"
                     >
-                      Netflix ↗
+                      Search on Netflix ↗
                     </a>
                     <a
                       href={defaultMuseAsiaSearch}
@@ -485,7 +559,7 @@ export function ScreeningModal({
                       rel="noopener noreferrer"
                       className="rounded-lg border border-white/20 bg-white/5 hover:bg-white/10 px-4 py-2 text-xs sm:text-sm font-medium text-white transition"
                     >
-                      Muse Asia ↗
+                      Search Muse Asia ↗
                     </a>
                   </div>
                 </div>
@@ -518,7 +592,7 @@ export function ScreeningModal({
                       setVideoError('Full-episode stream interrupted or temporarily unreachable.')
                     }
                   >
-                    {(currentEpObj.subtitles || SUBTITLE_TRACKS).map((sub) => (
+                    {verifiedSubtitles.map((sub) => (
                       <track
                         key={sub.srcLang}
                         kind="subtitles"
@@ -566,7 +640,7 @@ export function ScreeningModal({
                       <span>{displayedRuntimeLabel}</span>
                       <span>·</span>
                       <span className="text-[#38BDF8]">
-                        {currentEpObj.audio_tracks?.[0] || (audioTrack === 'JP' ? 'JP Original' : 'EN Dub')}
+                        {verifiedAudioTracks[selectedAudioIdx] || verifiedAudioTracks[0]}
                       </span>
                       {isBuffering && (
                         <>
@@ -646,29 +720,33 @@ export function ScreeningModal({
                   </div>
                 </div>
               ) : sourceMode === 'direct' && !hasDirectStream ? (
-                /* Honest Full-Episode Unavailable / External Partner Screen (NEVER plays a 1-minute trailer as an episode) */
+                /* Honest Full-Episode Unavailable / External Partner Screen (NEVER plays Episode 1 or a 1-minute trailer) */
                 <div
                   data-testid="episode-unavailable-notice"
                   className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-[#171522] to-[#0B0A0E]"
                 >
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono uppercase tracking-wider mb-3">
-                    <span>Full Episode Hosted on Official Partner Network</span>
+                    <span>
+                      {isMissingExactEpisodeOrSeason
+                        ? `Exact Episode Not Found (${resolvedPlayback.sourceStatus}) · Never Falling Back to Episode 1`
+                        : 'Full Episode Hosted on Official Partner Network'}
+                    </span>
                   </div>
                   <h3 className="text-base sm:text-xl font-bold text-white max-w-lg mb-2">
-                    {anime.title} — Season {selectedSeasonNum}, Episode {selectedEp}: {currentEpObj.title}
+                    {anime.title} — Season {selectedSeasonNum}, Episode {selectedEp}: {currentEpTitle}
                   </h3>
                   <p className="text-xs sm:text-sm text-[#94A3B8] max-w-lg mb-5 leading-relaxed">
-                    Full-length episode video for <strong className="text-white">Episode {selectedEp}</strong> is licensed to external streaming distributors in your region. Kitsune+ strictly separates promotional trailers from full episodes and never plays a 1-minute trailer or sample clip in place of an episode.
+                    {resolvedPlayback.reason}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-2.5">
-                    {currentEpObj.external_episode_url && (
+                    {resolvedPlayback.externalEpisodeUrl && (
                       <a
-                        href={currentEpObj.external_episode_url}
+                        href={resolvedPlayback.externalEpisodeUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-xl bg-[#F43F5E] hover:bg-[#e11d48] px-4 py-2 text-xs sm:text-sm font-bold text-white transition shadow-lg shadow-[#F43F5E]/20"
                       >
-                        ▶ Watch Full Episode {selectedEp} on {currentEpObj.provider_id || 'Official Partner'} ↗
+                        ▶ Open Verified Ep {selectedEp} Link on {resolvedPlayback.providerId || 'Official Partner'} ↗
                       </a>
                     )}
                     <a
@@ -677,7 +755,7 @@ export function ScreeningModal({
                       rel="noopener noreferrer"
                       className="rounded-xl bg-amber-400 hover:bg-amber-300 px-4 py-2 text-xs sm:text-sm font-bold text-black transition"
                     >
-                      Stream Full Episode {selectedEp} on Crunchyroll ↗
+                      Search Ep {selectedEp} on Crunchyroll (Search Query) ↗
                     </a>
                     <a
                       href={defaultMuseAsiaSearch}
@@ -685,7 +763,7 @@ export function ScreeningModal({
                       rel="noopener noreferrer"
                       className="rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 px-4 py-2 text-xs sm:text-sm font-medium text-white transition"
                     >
-                      Muse Asia Full Episodes ↗
+                      Search Muse Asia Channel ↗
                     </a>
                     {hasTrailer && (
                       <button
@@ -732,7 +810,7 @@ export function ScreeningModal({
                     rel="noopener noreferrer"
                     className="rounded-lg bg-[#F43F5E] px-4 py-2 text-xs font-semibold text-white"
                   >
-                    Search Full Episodes on Crunchyroll ↗
+                    Search on Crunchyroll ↗
                   </a>
                 </div>
               )}
@@ -752,7 +830,7 @@ export function ScreeningModal({
                 <button
                   type="button"
                   onClick={handleNextEpisode}
-                  disabled={currentEpIndex >= episodes.length - 1}
+                  disabled={currentEpIndex < 0 || currentEpIndex >= episodes.length - 1}
                   className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-white disabled:opacity-40 hover:bg-white/10 transition"
                 >
                   Next Ep ⏭
@@ -761,30 +839,52 @@ export function ScreeningModal({
 
               {sourceMode === 'direct' && hasDirectStream ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    aria-label="Audio track selection"
-                    value={audioTrack}
-                    onChange={(e) => setAudioTrack(e.target.value)}
-                    className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-xs text-white focus:outline-none"
-                  >
-                    {(currentEpObj.audio_tracks || ['Original Broadcast Audio']).map((trackName, idx) => (
-                      <option key={idx} value={idx === 0 ? 'JP' : 'EN'}>
-                        Audio: {trackName}
-                      </option>
-                    ))}
-                  </select>
+                  {/* Audio Track Handling: Only show switcher if multiple real tracks exist; otherwise show honest badge */}
+                  {verifiedAudioTracks.length > 1 ? (
+                    <select
+                      aria-label="Audio track selection"
+                      value={selectedAudioIdx}
+                      onChange={(e) => setSelectedAudioIdx(Number(e.target.value))}
+                      className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-xs text-white focus:outline-none"
+                    >
+                      {verifiedAudioTracks.map((trackName, idx) => (
+                        <option key={idx} value={idx}>
+                          Audio: {trackName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span
+                      data-testid="authentic-audio-badge"
+                      className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-[11px] font-mono text-[#CBD5E1]"
+                    >
+                      Audio: {verifiedAudioTracks[0]}
+                    </span>
+                  )}
 
-                  <select
-                    aria-label="Subtitle language selection"
-                    value={subtitleLang}
-                    onChange={(e) => setSubtitleLang(e.target.value)}
-                    className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-xs text-white focus:outline-none"
-                  >
-                    <option value="en">Sub: English</option>
-                    <option value="ja">Sub: 日本語 (JP)</option>
-                    <option value="es">Sub: Español</option>
-                    <option value="off">Subtitles: Off</option>
-                  </select>
+                  {/* Subtitle Track Handling: Only show switcher if verified title-specific VTT tracks exist */}
+                  {verifiedSubtitles.length > 0 ? (
+                    <select
+                      aria-label="Subtitle language selection"
+                      value={subtitleLang}
+                      onChange={(e) => setSubtitleLang(e.target.value)}
+                      className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-xs text-white focus:outline-none"
+                    >
+                      {verifiedSubtitles.map((sub) => (
+                        <option key={sub.srcLang} value={sub.srcLang}>
+                          Sub: {sub.label}
+                        </option>
+                      ))}
+                      <option value="off">Subtitles: Off</option>
+                    </select>
+                  ) : (
+                    <span
+                      data-testid="authentic-subtitle-badge"
+                      className="rounded-lg bg-[#1A1823] border border-white/15 px-2.5 py-1 text-[11px] font-mono text-emerald-300"
+                    >
+                      Subtitles: {resolvedPlayback.subtitleStatus || 'Broadcast Master (No Separate VTT)'}
+                    </span>
+                  )}
 
                   <select
                     aria-label="Playback speed"
@@ -851,61 +951,48 @@ export function ScreeningModal({
 
               <div>
                 <h4 className="text-sm sm:text-base font-bold text-white">
-                  S{selectedSeasonNum}:E{selectedEp} — {currentEpObj.title} ({displayedRuntimeLabel})
+                  S{selectedSeasonNum}:E{selectedEp} — {currentEpTitle} ({displayedRuntimeLabel})
                 </h4>
                 <p className="text-xs sm:text-sm text-[#94A3B8] leading-relaxed mt-1">
-                  {currentEpObj.synopsis || anime.synopsis}
+                  {resolvedPlayback.synopsis || exactEpObj?.synopsis || anime.synopsis}
                 </p>
               </div>
 
-              {/* Verified Legal External Streaming Links */}
+              {/* Verified Legal External Streaming Links (Explicitly Classified by Link Type) */}
               <div className="rounded-xl border border-white/10 bg-[#121118] p-3 text-xs space-y-2">
                 <div className="text-[11px] font-mono uppercase tracking-wider text-[#94A3B8]">
-                  Authorized Full-Episode Distributors & Official Archives:
+                  Authorized Distributors & Partner Link Classification:
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  {(anime.legal_links || []).map((link, idx) => (
-                    <a
-                      key={idx}
-                      href={link.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-emerald-400 hover:underline font-semibold"
-                    >
-                      {link.name} ↗
-                    </a>
-                  ))}
-                  <a
-                    href={defaultCrunchyrollSearch}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#38BDF8] hover:underline font-medium"
-                  >
-                    Crunchyroll ↗
-                  </a>
-                  <a
-                    href={defaultNetflixSearch}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#38BDF8] hover:underline font-medium"
-                  >
-                    Netflix Anime ↗
-                  </a>
+                  {(resolvedPlayback.legalLinks || []).map((link, idx) => {
+                    const baseLabel = link.label || link.name || 'Partner Link';
+                    const typeTag =
+                      link.link_type === 'external_series_page' ? 'Series Page' : 'Search Query';
+                    const alreadyTagged =
+                      /series page|search/i.test(baseLabel);
+                    return (
+                      <a
+                        key={idx}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={
+                          link.link_type === 'external_series_page'
+                            ? 'text-emerald-400 hover:underline font-semibold'
+                            : 'text-[#38BDF8] hover:underline font-medium'
+                        }
+                      >
+                        {alreadyTagged ? `${baseLabel} ↗` : `${baseLabel} (${typeTag}) ↗`}
+                      </a>
+                    );
+                  })}
                   <a
                     href={defaultHidiveSearch}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[#38BDF8] hover:underline font-medium"
                   >
-                    HIDIVE ↗
-                  </a>
-                  <a
-                    href={defaultMuseAsiaSearch}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#38BDF8] hover:underline font-medium"
-                  >
-                    Muse Asia (YouTube) ↗
+                    Search on HIDIVE ↗
                   </a>
                   <a
                     href={defaultAniOneSearch}
@@ -913,7 +1000,7 @@ export function ScreeningModal({
                     rel="noopener noreferrer"
                     className="text-[#38BDF8] hover:underline font-medium"
                   >
-                    Ani-One Asia (YouTube) ↗
+                    Search Ani-One Asia ↗
                   </a>
                 </div>
               </div>
@@ -945,97 +1032,115 @@ export function ScreeningModal({
 
             <div className="p-3 border-b border-white/10 flex items-center justify-between">
               <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-white">
-                Seasons & Full Episodes
+                Seasons & Verified Episodes
               </h3>
               <span className="text-[11px] font-mono text-[#94A3B8]">
-                {episodes.length} {episodes.length === 1 ? 'Feature / Episode' : 'Episodes'}
+                {episodes.length > 0
+                  ? `${episodes.length} ${episodes.length === 1 ? 'Feature / Episode' : 'Episodes'}`
+                  : 'Catalog Count Only'}
               </span>
             </div>
 
             {/* Scrollable Episode List */}
             <div className="overflow-y-auto divide-y divide-white/5 flex-1">
-              {episodes.map((ep) => {
-                const isCurrent = ep.ep === selectedEp;
-                const epHasDirectStream = Boolean(ep.stream_url && ep.content_type !== 'trailer');
-                const epDurationLabel = ep.duration_seconds
-                  ? formatDurationSeconds(ep.duration_seconds)
-                  : ep.duration || 'External Partner';
+              {episodes.length === 0 ? (
+                <div className="p-5 text-xs text-[#94A3B8] space-y-2">
+                  <p className="font-semibold text-white">
+                    No Individual Episode Records Returned by Public API
+                  </p>
+                  <p className="leading-relaxed">
+                    Catalog metadata lists {anime.episodes || 'TBA'} total episodes for this title, but episode-by-episode streaming links were not provided. Kitsune+ never fabricates placeholder episodes when episode records are unavailable.
+                  </p>
+                </div>
+              ) : (
+                episodes.map((ep) => {
+                  const isCurrent = Number(ep.ep) === Number(selectedEp);
+                  const epHasDirectStream = Boolean(ep.stream_url && ep.content_type !== 'trailer');
+                  const epDurationLabel = ep.duration_seconds
+                    ? formatDurationSeconds(ep.duration_seconds)
+                    : ep.duration || 'External Partner';
 
-                return (
-                  <div
-                    key={`${selectedSeasonNum}-${ep.ep}`}
-                    className={`p-3 text-left transition flex items-start gap-3 ${
-                      isCurrent
-                        ? 'bg-[#F43F5E]/15 ring-1 ring-inset ring-[#F43F5E]/40'
-                        : 'hover:bg-white/5'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      data-testid={`episode-btn-s${selectedSeasonNum}-e${ep.ep}`}
-                      onClick={() => handleEpisodePick(ep)}
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold transition ${
+                  return (
+                    <div
+                      key={`${selectedSeasonNum}-${ep.ep}`}
+                      className={`p-3 text-left transition flex items-start gap-3 ${
                         isCurrent
-                          ? 'bg-[#F43F5E] text-white'
-                          : 'bg-white/10 text-[#94A3B8] hover:text-white'
+                          ? 'bg-[#F43F5E]/15 ring-1 ring-inset ring-[#F43F5E]/40'
+                          : 'hover:bg-white/5'
                       }`}
                     >
-                      {ep.ep}
-                    </button>
+                      <button
+                        type="button"
+                        data-testid={`episode-btn-s${selectedSeasonNum}-e${ep.ep}`}
+                        onClick={() => handleEpisodePick(ep)}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold transition ${
+                          isCurrent
+                            ? 'bg-[#F43F5E] text-white'
+                            : 'bg-white/10 text-[#94A3B8] hover:text-white'
+                        }`}
+                      >
+                        {ep.ep}
+                      </button>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleEpisodePick(ep)}
-                          className={`text-xs font-bold text-left truncate transition ${
-                            isCurrent ? 'text-white' : 'text-[#94A3B8] hover:text-white'
-                          }`}
-                        >
-                          {ep.title}
-                        </button>
-                        <span className="text-[10px] font-mono text-[#64748B] shrink-0">
-                          {epDurationLabel}
-                        </span>
-                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleEpisodePick(ep)}
+                            className={`text-xs font-bold text-left truncate transition ${
+                              isCurrent ? 'text-white' : 'text-[#94A3B8] hover:text-white'
+                            }`}
+                          >
+                            {ep.title}
+                          </button>
+                          <span className="text-[10px] font-mono text-[#64748B] shrink-0">
+                            {epDurationLabel}
+                          </span>
+                        </div>
 
-                      {ep.synopsis && (
-                        <p className="text-[11px] text-[#64748B] line-clamp-2 mt-0.5 leading-relaxed">
-                          {ep.synopsis}
-                        </p>
-                      )}
+                        {ep.synopsis && (
+                          <p className="text-[11px] text-[#64748B] line-clamp-2 mt-0.5 leading-relaxed">
+                            {ep.synopsis}
+                          </p>
+                        )}
 
-                      <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono">
-                        <button
-                          type="button"
-                          onClick={() => handleEpisodePick(ep)}
-                          className={
-                            epHasDirectStream
-                              ? 'text-emerald-400 hover:underline font-semibold'
-                              : 'text-amber-400 hover:underline font-semibold'
-                          }
-                        >
-                          {epHasDirectStream
-                            ? `▶ Play Full Episode (${epDurationLabel})`
-                            : '🌐 View Partner Availability'}
-                        </button>
-                        <span>·</span>
-                        <a
-                          href={
-                            ep.external_episode_url ||
-                            `https://www.crunchyroll.com/search?q=${encodeURIComponent(`${anime.title} episode ${ep.ep}`)}`
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[#94A3B8] hover:text-white"
-                        >
-                          Official Partner ↗
-                        </a>
+                        <div className="flex items-center gap-2 mt-1.5 text-[10px] font-mono">
+                          <button
+                            type="button"
+                            onClick={() => handleEpisodePick(ep)}
+                            className={
+                              epHasDirectStream
+                                ? 'text-emerald-400 hover:underline font-semibold'
+                                : 'text-amber-400 hover:underline font-semibold'
+                            }
+                          >
+                            {epHasDirectStream
+                              ? `▶ Play Full Episode (${epDurationLabel})`
+                              : '🌐 View Partner Availability'}
+                          </button>
+                          <span>·</span>
+                          <a
+                            href={
+                              ep.external_episode_url ||
+                              ep.external_series_url ||
+                              `https://www.crunchyroll.com/search?q=${encodeURIComponent(`${anime.title} episode ${ep.ep}`)}`
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#94A3B8] hover:text-white"
+                          >
+                            {ep.external_episode_url
+                              ? 'Verified Ep Link ↗'
+                              : ep.external_series_url
+                              ? 'Official Series Page ↗'
+                              : 'Partner Search ↗'}
+                          </a>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

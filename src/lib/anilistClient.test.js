@@ -85,8 +85,20 @@ describe('mapAniListMediaToAnime', () => {
     assert.equal(anime.status, 'Ongoing');
     assert.equal(anime.simulcast, true);
     assert.equal(anime.trailer_url, 'https://www.youtube-nocookie.com/embed/ZEkwCGJ3o7M?rel=0');
-    assert.equal(anime.seasons.length, 1);
-    assert.equal(anime.seasons[0].episodes.length, 24);
+    assert.equal(anime.episodes_metadata_status, 'catalog_count_only');
+    assert.equal(anime.seasons.length, 0, 'Must not fabricate placeholder episodes when streamingEpisodes are absent');
+
+    const withPartnerEps = mapAniListMediaToAnime({
+      ...mockMedia,
+      streamingEpisodes: [
+        { title: "Episode 1 - The Journey's End", url: 'https://www.crunchyroll.com/watch/G1', site: 'Crunchyroll' },
+        { title: "Episode 2 - It Didn't Have to Be Magic", url: 'https://www.crunchyroll.com/watch/G2', site: 'Crunchyroll' }
+      ]
+    });
+    assert.equal(withPartnerEps.episodes_metadata_status, 'verified_partner_episodes');
+    assert.equal(withPartnerEps.seasons.length, 1);
+    assert.equal(withPartnerEps.seasons[0].episodes.length, 2);
+    assert.equal(withPartnerEps.seasons[0].episodes[0].duration_seconds, null);
   });
 });
 

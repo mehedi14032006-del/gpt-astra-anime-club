@@ -159,14 +159,6 @@ export default function App() {
     }
   });
 
-  const [isPremium, setIsPremium] = useState(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEYS.PREMIUM) === '1';
-    } catch {
-      return false;
-    }
-  });
-
   const [watchProgress, setWatchProgress] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.WATCH_PROGRESS);
@@ -176,13 +168,70 @@ export default function App() {
     }
   });
 
-  // Auth & Premium Modals
+  // Real Supabase Auth & Server-Verified Subscription/Role State (Never spoofed via localStorage)
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [userSession, setUserSession] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup' | 'reset'
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authStatusMsg, setAuthStatusMsg] = useState('');
+  const [authErrorMsg, setAuthErrorMsg] = useState('');
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+
+  const isPremium = Boolean(userProfile?.subscription_tier === 'premium');
+  const isAdmin = Boolean(userProfile?.role === 'admin');
+
+  // Sync Supabase Auth Session & Profile Entitlements
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+    let mounted = true;
+
+    async function loadProfile(user) {
+      if (!user?.id) {
+        if (mounted) setUserProfile(null);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (!error && data && mounted) {
+          setUserProfile(data);
+        }
+      } catch {
+        // Ignore profile fetch error if table not migrated
+      }
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const sessionUser = data?.session?.user || null;
+      setUserSession(sessionUser ? { ...sessionUser, accessToken: data.session.access_token } : null);
+      if (sessionUser) loadProfile(sessionUser);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      const sessionUser = session?.user || null;
+      setUserSession(sessionUser ? { ...sessionUser, accessToken: session.access_token } : null);
+      if (sessionUser) {
+        loadProfile(sessionUser);
+      } else {
+        setUserProfile(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      listener?.subscription?.unsubscribe?.();
+    };
+  }, []);
 
   // Persist State to LocalStorage
   useEffect(() => {
@@ -471,10 +520,11 @@ export default function App() {
       list = currentSectionList.length > 0 ? currentSectionList : CURATED_ANIME;
     }
 
-    // Strictly deduplicate by ID to guarantee unique React child keys
+    // Strictly deduplicate by ID and enforce 18+ Safe Mode filtering on public catalog views
     const seen = new Set();
     return list.filter((item) => {
       if (!item || !item.id) return false;
+      if (!isAdultAllowed && isMatureAnime(item)) return false;
       const key = String(item.id);
       if (seen.has(key)) return false;
       seen.add(key);
@@ -490,7 +540,8 @@ export default function App() {
     activeNav,
     discoverySection,
     discoveryData,
-    userLists
+    userLists,
+    isAdultAllowed
   ]);
 
   // Spotlight Featured Hero (Frieren or first discovery item)
@@ -507,8 +558,8 @@ export default function App() {
     });
   }, []);
 
-  // Strict 18+ Adult Gating before opening any Mature anime
-  const handleOpenAnime = useCallback((anime, seasonNumber = 1, episodeNumber = 1) => {
+  // Strict 18+ Adult Gating & Exact Season/Episode Resolution (Zero Fallback-to-Episode-1)
+  const handleOpenAnime = useCallback((anime, seasonNumber, episodeNumber) => {
     if (!anime) return;
     trackRecentlyViewed(anime);
 
@@ -523,32 +574,40 @@ export default function App() {
       }
       if (!ageState.verifiedAdult || ageState.safeModeEnabled) {
         setAgeGateError('');
-        setPendingMatureSelect({ anime, seasonNumber, episodeNumber });
+        setPendingMatureSelect({ anime, seasonNumber: seasonNumber ?? 1, episodeNumber: episodeNumber ?? 1 });
         setShowAgeModal(true);
         return;
       }
     }
 
     const existing = watchProgress[String(anime.id)];
-    const targetSeason = existing?.seasonNumber || seasonNumber || 1;
-    const targetEp = existing?.episodeNumber || episodeNumber || 1;
-    const seasons = getAnimeSeasons(anime);
-    const activeSeasonObj =
-      seasons.find((s) => s.season_number === targetSeason) || seasons[0];
-    const epObj =
-      activeSeasonObj?.episodes?.find((e) => e.ep === targetEp) ||
-      activeSeasonObj?.episodes?.[0];
+    const targetSeason =
+      seasonNumber !== undefined && seasonNumber !== null
+        ? Number(seasonNumber)
+        : Number(existing?.seasonNumber || 1);
+    const targetEp =
+      episodeNumber !== undefined && episodeNumber !== null
+        ? Number(episodeNumber)
+        : Number(existing?.episodeNumber || 1);
 
-    if (epObj?.stream_url) {
+    const seasons = getAnimeSeasons(anime);
+    // STRICT EXACT LOOKUP: Never fall back to seasons[0] or episodes[0]!
+    const activeSeasonObj = seasons.find((s) => Number(s.season_number) === targetSeason);
+    const epObj = activeSeasonObj?.episodes?.find((e) => Number(e.ep) === targetEp);
+
+    if (epObj?.stream_url && epObj.content_type !== 'trailer') {
       setWatchProgress((prev) =>
         updateWatchProgress(prev, {
           animeId: anime.id,
           seasonNumber: targetSeason,
           episodeNumber: targetEp,
-          totalEpisodes: activeSeasonObj?.episodes?.length || anime.episodes || 12,
-          episodeTitle: epObj?.title || `Episode ${targetEp}`,
-          resumeSeconds: existing?.resumeSeconds || 0,
-          durationSeconds: epObj?.duration_seconds || 0
+          totalEpisodes: activeSeasonObj?.episodes?.length || anime.episodes || 1,
+          episodeTitle: epObj.title || `Episode ${targetEp}`,
+          resumeSeconds:
+            existing?.seasonNumber === targetSeason && existing?.episodeNumber === targetEp
+              ? existing.resumeSeconds || 0
+              : 0,
+          durationSeconds: epObj.duration_seconds || 0
         })
       );
     }
@@ -913,7 +972,13 @@ export default function App() {
           {userSession ? (
             <button
               type="button"
-              onClick={() => setUserSession(null)}
+              onClick={async () => {
+                if (isSupabaseConfigured && supabase) {
+                  await supabase.auth.signOut().catch(() => {});
+                }
+                setUserSession(null);
+                setUserProfile(null);
+              }}
               className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10 transition"
             >
               Sign out
@@ -921,7 +986,11 @@ export default function App() {
           ) : (
             <button
               type="button"
-              onClick={() => setShowAuthModal(true)}
+              onClick={() => {
+                setAuthErrorMsg('');
+                setAuthStatusMsg('');
+                setShowAuthModal(true);
+              }}
               className="rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] px-3 py-1 text-xs font-semibold text-white transition"
             >
               Sign In
@@ -1316,10 +1385,9 @@ export default function App() {
         <AdminCatalogModal
           onClose={() => setShowAdminModal(false)}
           userSession={userSession}
-          ageState={ageState}
-          discoveryStats={{
-            totalCached: Object.values(discoveryData).reduce((acc, arr) => acc + (arr?.length || 0), 0)
-          }}
+          userProfile={userProfile}
+          isAdmin={isAdmin}
+          catalogCount={Object.values(discoveryData).reduce((acc, arr) => acc + (arr?.length || 0), 0)}
         />
       )}
 
@@ -1363,16 +1431,14 @@ export default function App() {
             durationSeconds
           }) => {
             const seasons = getAnimeSeasons(activeScreening.anime);
-            const sObj =
-              seasons.find((s) => s.season_number === Number(seasonNumber)) ||
-              seasons[0];
+            const sObj = seasons.find((s) => Number(s.season_number) === Number(seasonNumber));
             setWatchProgress((prev) =>
               updateWatchProgress(prev, {
                 animeId: activeScreening.anime.id,
                 seasonNumber,
                 episodeNumber,
                 totalEpisodes:
-                  sObj?.episodes?.length || activeScreening.anime.episodes || 12,
+                  sObj?.episodes?.length || activeScreening.anime.episodes || 1,
                 episodeTitle,
                 resumeSeconds,
                 durationSeconds
@@ -1549,7 +1615,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Auth Modal */}
+      {/* Real Supabase Authentication Modal (Sign In / Sign Up / Password Recovery) */}
       {showAuthModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
@@ -1557,10 +1623,14 @@ export default function App() {
           aria-modal="true"
           aria-labelledby="auth-modal-title"
         >
-          <div className="w-full max-w-sm rounded-xl border border-white/15 bg-[#13121A] p-6 space-y-4 shadow-2xl">
+          <div className="w-full max-w-md rounded-xl border border-white/15 bg-[#13121A] p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h2 id="auth-modal-title" className="text-lg font-bold text-white">
-                Sign In to Kitsune+
+                {authMode === 'signup'
+                  ? 'Create Kitsune+ Account'
+                  : authMode === 'reset'
+                  ? 'Reset Account Password'
+                  : 'Sign In to Kitsune+'}
               </h2>
               <button
                 type="button"
@@ -1570,42 +1640,151 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <p className="text-xs text-[#94A3B8]">
-              Connect your account to save Watchlists and progress across devices.
-            </p>
-            <div className="space-y-3">
+
+            {/* Auth Mode Switcher */}
+            <div className="flex items-center gap-2 text-xs font-semibold border-b border-white/10 pb-2">
+              {[
+                { id: 'signin', label: 'Sign In' },
+                { id: 'signup', label: 'Create Account' },
+                { id: 'reset', label: 'Password Recovery' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(tab.id);
+                    setAuthErrorMsg('');
+                    setAuthStatusMsg('');
+                  }}
+                  className={`px-2.5 py-1 rounded ${
+                    authMode === tab.id
+                      ? 'bg-[#F43F5E] text-white'
+                      : 'text-[#94A3B8] hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {!isSupabaseConfigured && (
+              <div
+                data-testid="supabase-unconfigured-notice"
+                className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200 leading-relaxed"
+              >
+                <strong>Cloud Auth Environment Notice:</strong> <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> are not configured in this preview environment. Kitsune+ never fabricates fake local login sessions. Your watch progress and watchlists remain persisted in local storage.
+              </div>
+            )}
+
+            {authErrorMsg && (
+              <div
+                data-testid="auth-error-msg"
+                className="rounded-lg border border-rose-500/40 bg-rose-500/15 p-3 text-xs text-rose-200"
+              >
+                {authErrorMsg}
+              </div>
+            )}
+
+            {authStatusMsg && (
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 p-3 text-xs text-emerald-200">
+                {authStatusMsg}
+              </div>
+            )}
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthErrorMsg('');
+                setAuthStatusMsg('');
+
+                if (!authEmail.trim()) {
+                  setAuthErrorMsg('Please enter a valid email address.');
+                  return;
+                }
+                if (authMode !== 'reset' && authPassword.length < 6) {
+                  setAuthErrorMsg('Password must be at least 6 characters.');
+                  return;
+                }
+
+                if (!isSupabaseConfigured || !supabase) {
+                  setAuthErrorMsg(
+                    'Supabase Authentication is not configured on this server (missing VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY). Configure real Supabase credentials to enable cloud sign-in.'
+                  );
+                  return;
+                }
+
+                setIsAuthSubmitting(true);
+                try {
+                  if (authMode === 'reset') {
+                    const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim());
+                    if (error) throw error;
+                    setAuthStatusMsg('Password recovery instructions sent to your email.');
+                  } else if (authMode === 'signup') {
+                    const { data, error } = await supabase.auth.signUp({
+                      email: authEmail.trim(),
+                      password: authPassword
+                    });
+                    if (error) throw error;
+                    if (data?.session) {
+                      setShowAuthModal(false);
+                    } else {
+                      setAuthStatusMsg('Account created! Please check your email inbox to confirm your registration.');
+                    }
+                  } else {
+                    const { error } = await supabase.auth.signInWithPassword({
+                      email: authEmail.trim(),
+                      password: authPassword
+                    });
+                    if (error) throw error;
+                    setShowAuthModal(false);
+                  }
+                } catch (err) {
+                  setAuthErrorMsg(err?.message || 'Authentication request failed.');
+                } finally {
+                  setIsAuthSubmitting(false);
+                }
+              }}
+              className="space-y-3"
+            >
               <input
                 type="email"
+                required
+                aria-label="Email address"
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
                 placeholder="Email address"
                 className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3.5 py-2 text-sm text-white focus:border-[#F43F5E] focus:outline-none"
               />
-              <input
-                type="password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="Password"
-                className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3.5 py-2 text-sm text-white focus:border-[#F43F5E] focus:outline-none"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (authEmail) {
-                  setUserSession({ email: authEmail });
-                  setShowAuthModal(false);
-                }
-              }}
-              className="w-full rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] py-2.5 text-sm font-bold text-white transition"
-            >
-              Sign In to Account
-            </button>
+              {authMode !== 'reset' && (
+                <input
+                  type="password"
+                  required
+                  aria-label="Password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="Password (min. 6 characters)"
+                  className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3.5 py-2 text-sm text-white focus:border-[#F43F5E] focus:outline-none"
+                />
+              )}
+              <button
+                type="submit"
+                disabled={isAuthSubmitting}
+                className="w-full rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] disabled:opacity-50 py-2.5 text-sm font-bold text-white transition"
+              >
+                {isAuthSubmitting
+                  ? 'Connecting to Supabase...'
+                  : authMode === 'signup'
+                  ? 'Create Account'
+                  : authMode === 'reset'
+                  ? 'Send Password Reset Email'
+                  : 'Sign In to Account'}
+              </button>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Upgrade Pass Modal */}
+      {/* Real Stripe Subscription Checkout Modal (Never Activates Premium Without Verified Payment) */}
       {showUpgradeModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
@@ -1616,38 +1795,81 @@ export default function App() {
           <div className="w-full max-w-md rounded-xl border border-amber-400/30 bg-[#13121A] p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono uppercase tracking-wider text-amber-400">
-                ✦ Kitsune+ Simulcast Pass
+                ✦ Kitsune+ Simulcast Pass (Stripe Verified)
               </span>
               <button
                 type="button"
-                onClick={() => setShowUpgradeModal(false)}
+                onClick={() => {
+                  setCheckoutError('');
+                  setShowUpgradeModal(false);
+                }}
                 className="text-[#94A3B8] hover:text-white text-sm"
               >
                 ✕
               </button>
             </div>
             <h2 id="upgrade-modal-title" className="text-xl font-bold text-white">
-              Uninterrupted 1080p Simulcasts
+              Verified Cloud Subscription & Sync
             </h2>
-            <ul className="space-y-2 text-sm text-[#CBD5E1]">
-              <li>• Zero banner ads across all screening rooms</li>
-              <li>• Instant 1-hour post-Japan simulcast access</li>
-              <li>• Dual-audio Japanese 2.0 PCM & English 5.1 Dub streams</li>
-            </ul>
+            <p className="text-xs text-[#94A3B8] leading-relaxed">
+              All 11 public-domain and open-archive productions stream free in-app. The Simulcast Pass is processed via Stripe Checkout (`POST /api/checkout`) and unlocked exclusively via verified Stripe webhooks (`POST /api/webhook`).
+            </p>
+
+            {checkoutError && (
+              <div
+                data-testid="checkout-error-notice"
+                className="rounded-lg border border-rose-500/40 bg-rose-500/15 p-3 text-xs text-rose-200 leading-relaxed"
+              >
+                {checkoutError}
+              </div>
+            )}
+
             <div className="pt-2 flex items-center justify-between border-t border-white/10">
               <div>
                 <div className="text-2xl font-extrabold text-white">$7.99</div>
-                <div className="text-xs text-[#94A3B8]">per month · cancel anytime</div>
+                <div className="text-xs text-[#94A3B8]">per month · Stripe Checkout</div>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setIsPremium(true);
-                  setShowUpgradeModal(false);
+                disabled={isCheckoutLoading}
+                onClick={async () => {
+                  setCheckoutError('');
+                  if (!userSession?.accessToken) {
+                    setCheckoutError(
+                      'Authentication Required: Please sign in with a verified Supabase account before starting Stripe Checkout. Premium status is never activated locally without payment.'
+                    );
+                    return;
+                  }
+
+                  setIsCheckoutLoading(true);
+                  try {
+                    const response = await fetch('/api/checkout', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${userSession.accessToken}`
+                      }
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data?.url) {
+                      setCheckoutError(
+                        data?.error ||
+                          'Stripe Checkout could not be initialized. Verify STRIPE_SECRET_KEY and SUPABASE_SERVICE_ROLE_KEY on the server.'
+                      );
+                      return;
+                    }
+                    window.location.assign(data.url);
+                  } catch {
+                    setCheckoutError(
+                      'Could not reach /api/checkout. Premium status is never activated on the client without server-verified Stripe payment.'
+                    );
+                  } finally {
+                    setIsCheckoutLoading(false);
+                  }
                 }}
-                className="rounded-lg bg-amber-400 hover:bg-amber-300 px-5 py-2.5 text-sm font-bold text-black transition"
+                className="rounded-lg bg-amber-400 hover:bg-amber-300 disabled:opacity-50 px-5 py-2.5 text-sm font-bold text-black transition"
               >
-                Activate Pass
+                {isCheckoutLoading ? 'Starting Stripe...' : 'Proceed to Stripe Checkout'}
               </button>
             </div>
           </div>
