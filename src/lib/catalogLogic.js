@@ -261,10 +261,10 @@ export function getAvailabilityStatus(anime) {
       playability: 'licensed-partner',
       watchableInApp: false,
       hasTrailer: Boolean(anime.trailer_url || anime.preview_stream_url),
-      badgeText: 'Partner Exclusive · Preview Only',
+      badgeText: 'Licensed Partner · External Full Episodes',
       reason:
         anime.availability_reason ||
-        'Full episodes are under exclusive regional distribution license. Watch the official preview here or stream full episodes legally on licensed partner platforms.',
+        'Full-length episodes are under regional distribution license on official partner platforms (Crunchyroll, Netflix, HIDIVE, Muse Asia, Ani-One Asia). Promotional trailers are strictly separated and never substituted for full episodes.',
       legalLinks: defaultLegalLinks
     };
   }
@@ -274,8 +274,8 @@ export function getAvailabilityStatus(anime) {
       playability: 'direct-hd',
       watchableInApp: true,
       hasTrailer: Boolean(anime.trailer_url),
-      badgeText: 'Direct HD · Sub & Dub',
-      reason: 'Verified H.264/AAC direct stream and official channel feed available in-app with multi-language subtitles.',
+      badgeText: 'Full Episodes · In-App Stream',
+      reason: 'Complete, full-length episode streams verified and playable directly in-app with multi-language subtitles.',
       legalLinks: defaultLegalLinks
     };
   }

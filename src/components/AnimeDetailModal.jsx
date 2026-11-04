@@ -42,7 +42,7 @@ export function AnimeDetailModal({
     let cancelled = false;
 
     async function fetchDetails() {
-      if (!animeId) {
+      if (!animeId || initialAnime?.availability_type === 'direct-hd') {
         setDetailData(initialAnime);
         setLoading(false);
         return;
@@ -216,10 +216,9 @@ export function AnimeDetailModal({
             ✕
           </button>
 
-          {/* Next Airing Badge on Banner */}
+          {/* Next Airing Readout on Banner */}
           {getNextAiringText() && (
-            <div className="absolute top-4 left-4 z-20 rounded-full border border-emerald-500/40 bg-emerald-950/80 backdrop-blur-md px-3 py-1 text-xs font-mono text-emerald-300 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="absolute top-4 left-4 z-20 rounded-lg border border-emerald-500/40 bg-emerald-950/85 backdrop-blur-md px-3 py-1 text-xs font-mono text-emerald-300">
               <span>{getNextAiringText()}</span>
             </div>
           )}
@@ -475,8 +474,8 @@ export function AnimeDetailModal({
               <div className="flex items-center justify-between">
                 <p className="text-xs text-[#94A3B8]">
                   {activeAnime.availability_type === 'direct-hd'
-                    ? 'Verified Direct HD multi-season stream with subtitles and dubbing.'
-                    : 'Episode directory and official distributor links.'}
+                    ? 'Verified full-length episode streams available directly in-app with subtitles. Promotional trailers are strictly separated.'
+                    : 'Official episode directory. Full-length episodes are hosted on authorized streaming partner platforms.'}
                 </p>
                 <button
                   type="button"
@@ -486,45 +485,54 @@ export function AnimeDetailModal({
                   }}
                   className="rounded-lg bg-[#F43F5E] px-3.5 py-1.5 text-xs font-semibold text-white"
                 >
-                  ▶ Open Player
+                  {activeAnime.availability_type === 'direct-hd'
+                    ? '▶ Watch Full Episode 1'
+                    : '🌐 Open Episode Guide'}
                 </button>
               </div>
 
               <div className="divide-y divide-white/5 rounded-xl border border-white/10 bg-[#161420] overflow-hidden">
-                {activeAnime.seasons?.[0]?.episodes?.map((ep, idx) => (
-                  <div
-                    key={`detail-ep-${ep.season || 1}-${ep.ep}-${idx}`}
-                    className="p-3 sm:p-4 flex items-center justify-between gap-4 hover:bg-white/5 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center font-mono text-xs font-bold text-[#F43F5E] shrink-0">
-                        {ep.ep}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs sm:text-sm font-semibold text-white truncate">
-                          {ep.title}
+                {activeAnime.seasons?.[0]?.episodes?.map((ep, idx) => {
+                  const hasFullEpisodeStream = Boolean(ep.stream_url && ep.content_type !== 'trailer');
+                  return (
+                    <div
+                      key={`detail-ep-${ep.season || 1}-${ep.ep}-${idx}`}
+                      className="p-3 sm:p-4 flex items-center justify-between gap-4 hover:bg-white/5 transition"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center font-mono text-xs font-bold text-[#F43F5E] shrink-0">
+                          {ep.ep}
                         </div>
-                        <p className="text-xs text-[#94A3B8] line-clamp-1 mt-0.5">
-                          {ep.synopsis}
-                        </p>
+                        <div className="min-w-0">
+                          <div className="text-xs sm:text-sm font-semibold text-white truncate">
+                            {ep.title}
+                          </div>
+                          <p className="text-xs text-[#94A3B8] line-clamp-1 mt-0.5">
+                            {ep.synopsis}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-mono text-[#94A3B8]">{ep.duration}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onOpenScreeningRoom?.(activeAnime, ep.season || 1, ep.ep);
+                            onClose?.();
+                          }}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                            hasFullEpisodeStream
+                              ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+                              : 'border-white/15 bg-white/5 text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {hasFullEpisodeStream ? '▶ Play Full Episode' : '🌐 Partner Access'}
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs font-mono text-[#94A3B8]">{ep.duration}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onOpenScreeningRoom?.(activeAnime, ep.season || 1, ep.ep);
-                          onClose?.();
-                        }}
-                        className="rounded-md border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white hover:bg-white/10"
-                      >
-                        Play
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

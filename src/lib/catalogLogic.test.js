@@ -138,52 +138,52 @@ describe('updateWatchProgress & formatTimestamp', () => {
 });
 
 describe('resolveEpisodeVideo (videoRegistry)', () => {
-  it('resolves distinct videos for different episodes of the same anime', async () => {
+  it('resolves distinct full-length videos for different episodes of the same anime', async () => {
     const { resolveEpisodeVideo } = await import('./videoRegistry.js');
     const ep1 = await resolveEpisodeVideo({
-      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      anime: { id: '1572', title: 'Jungle Emperor Leo (1989)' },
       seasonNumber: 1,
       episodeNumber: 1
     });
     const ep2 = await resolveEpisodeVideo({
-      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      anime: { id: '1572', title: 'Jungle Emperor Leo (1989)' },
       seasonNumber: 1,
       episodeNumber: 2
     });
 
     assert.equal(ep1.available, true);
     assert.equal(ep2.available, true);
-    assert.equal(ep1.streamUrl, '/streams/sintel-ep1.mp4');
-    assert.equal(ep2.streamUrl, '/streams/sintel-ep2.mp4');
+    assert.equal(ep1.contentType, 'full_episode');
+    assert.ok(ep1.durationSeconds >= 1400);
     assert.notEqual(ep1.streamUrl, ep2.streamUrl, 'Different episodes must have different video files!');
   });
 
-  it('resolves completely different videos for different anime titles', async () => {
+  it('resolves completely different full-length videos for different anime titles', async () => {
     const { resolveEpisodeVideo } = await import('./videoRegistry.js');
+    const leo = await resolveEpisodeVideo({
+      anime: { id: '1572', title: 'Jungle Emperor Leo' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    const tetsujin = await resolveEpisodeVideo({
+      anime: { id: '2687', title: 'Shin Tetsujin 28-go' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
     const sintel = await resolveEpisodeVideo({
       anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
       seasonNumber: 1,
       episodeNumber: 1
     });
-    const tears = await resolveEpisodeVideo({
-      anime: { id: 'tears-of-steel', title: 'Tears of Steel' },
-      seasonNumber: 1,
-      episodeNumber: 1
-    });
-    const elephants = await resolveEpisodeVideo({
-      anime: { id: 'elephants-dream', title: 'Elephants Dream' },
-      seasonNumber: 1,
-      episodeNumber: 1
-    });
 
-    assert.equal(sintel.streamUrl, '/streams/sintel-ep1.mp4');
-    assert.equal(tears.streamUrl, '/streams/tears-ep1.mp4');
-    assert.equal(elephants.streamUrl, '/streams/elephants-ep1.mp4');
-    assert.notEqual(sintel.streamUrl, tears.streamUrl);
-    assert.notEqual(tears.streamUrl, elephants.streamUrl);
+    assert.ok(leo.streamUrl.includes('EnglishSubJungleEmperorLeo1989'));
+    assert.ok(tetsujin.streamUrl.includes('the-new-adventures-of-gigantor'));
+    assert.ok(sintel.streamUrl.toLowerCase().includes('sintel'));
+    assert.notEqual(leo.streamUrl, tetsujin.streamUrl);
+    assert.notEqual(tetsujin.streamUrl, sintel.streamUrl);
   });
 
-  it('marks unhosted AniList anime as unavailable without playing another title video', async () => {
+  it('marks unhosted AniList anime as unavailable without playing another title video or auto-playing a trailer', async () => {
     const { resolveEpisodeVideo } = await import('./videoRegistry.js');
     const bokuNoPico = await resolveEpisodeVideo({
       anime: { id: '539', title: 'Boku no Pico' },
@@ -192,8 +192,11 @@ describe('resolveEpisodeVideo (videoRegistry)', () => {
     });
 
     assert.equal(bokuNoPico.available, false);
+    assert.equal(bokuNoPico.contentType, 'external_licensed_episode');
     assert.equal(bokuNoPico.streamUrl, null, 'Must NEVER return a fallback or another anime video!');
-    assert.match(bokuNoPico.reason, /In-app direct video stream is not hosted/);
+    assert.equal(bokuNoPico.embedUrl, null, 'Must NEVER assign a trailer embedUrl to an episode!');
+    assert.match(bokuNoPico.reason, /Promotional trailers are never substituted for full episodes/);
   });
 });
+
 

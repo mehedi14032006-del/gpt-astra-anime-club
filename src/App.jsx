@@ -15,14 +15,21 @@ import {
   queryAniList,
   ANILIST_DISCOVERY_QUERY,
   ANILIST_SEARCH_QUERY,
+  ANILIST_MEDIA_DETAIL_QUERY,
   mapAniListMediaToAnime,
   getCurrentSeasonAndYear
 } from './lib/anilistClient.js';
+import {
+  fetchJikan,
+  mapJikanMediaToAnime,
+  deduplicateCrossApiCatalog
+} from './lib/jikanClient.js';
 import { ScreeningModal } from './components/ScreeningModal.jsx';
 import { AnimeArtwork } from './components/AnimeArtwork.jsx';
 import { AnimeDetailModal } from './components/AnimeDetailModal.jsx';
 import { AniListSearch } from './components/AniListSearch.jsx';
 import { AniListSyncModal } from './components/AniListSyncModal.jsx';
+import { AdminCatalogModal } from './components/AdminCatalogModal.jsx';
 import { supabase, isSupabaseConfigured } from './lib/supabase.js';
 
 const STORAGE_KEYS = {
@@ -36,31 +43,37 @@ const STORAGE_KEYS = {
 };
 
 export default function App() {
-  // Direct curated matches dictionary for instant HD stream resolution
+  // Direct curated matches dictionary for instant full-episode stream resolution
   const curatedDirectMatches = useMemo(() => {
     const map = {};
     for (const item of CURATED_ANIME) {
       if (item.id) map[String(item.id)] = item;
       if (item.mal_id) map[String(item.mal_id)] = item;
+      if (item.anilist_id) map[String(item.anilist_id)] = item;
     }
     return map;
   }, []);
 
   // Main Discovery & Search State
-  const [activeNav, setActiveNav] = useState('discovery'); // 'discovery' | 'search' | 'library' | 'simulcast'
-  const [discoverySection, setDiscoverySection] = useState('trending'); // 'trending' | 'popular' | 'topRated' | 'airing' | 'upcoming' | 'seasonal'
+  const [activeNav, setActiveNav] = useState('discovery'); // 'discovery' | 'direct-streams' | 'library' | 'simulcast'
+  const [discoverySection, setDiscoverySection] = useState('trending');
 
-  // AniList Discovery Cached Buckets
+  // AniList + Jikan Discovery Cached Buckets
   const [discoveryData, setDiscoveryData] = useState({
     trending: [],
     popular: [],
     topRated: [],
     airing: [],
     upcoming: [],
-    seasonal: []
+    seasonal: [],
+    movies: [],
+    classic: [],
+    underrated: []
   });
   const [isDiscoveryLoading, setIsDiscoveryLoading] = useState(true);
   const [discoveryError, setDiscoveryError] = useState(null);
+  const [discoveryPageBySection, setDiscoveryPageBySection] = useState({});
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,9 +89,10 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
 
-  // Detail Modal & Screening Modal
+  // Detail Modal, Screening Modal & Admin Console Modal
   const [selectedDetailAnime, setSelectedDetailAnime] = useState(null);
   const [activeScreening, setActiveScreening] = useState(null);
+  const [showAdminModal, setShowAdminModal] = useState(false);
 
   // AniList Account Sync Modal
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -218,7 +232,7 @@ export default function App() {
   // Adult content allowed flag
   const isAdultAllowed = ageState.verifiedAdult && !ageState.safeModeEnabled && !ageState.isMinorLock;
 
-  // 1. Fetch AniList Discovery Sections on Load
+  // 1. Fetch AniList Discovery Sections on Load (with Jikan v4 secondary fallback & cross-API deduplication)
   useEffect(() => {
     let cancelled = false;
     setIsDiscoveryLoading(true);
@@ -238,38 +252,75 @@ export default function App() {
 
         const mapSection = (pageData) => {
           const media = pageData?.media || [];
-          const seen = new Set();
-          return media
-            .filter((m) => {
-              if (!m || !m.id || seen.has(String(m.id))) return false;
-              seen.add(String(m.id));
-              return true;
-            })
+          const mapped = media
             .map((m) => mapAniListMediaToAnime(m, curatedDirectMatches))
             .filter(Boolean);
+          return deduplicateCrossApiCatalog(mapped);
         };
 
+        const verifiedFullSeries = CURATED_ANIME.filter(
+          (a) => a.availability_type === 'direct-hd'
+        );
+        const verifiedMovies = verifiedFullSeries.filter((a) => a.format === 'Movie');
+
         setDiscoveryData({
-          trending: mapSection(data?.trending),
+          trending: deduplicateCrossApiCatalog([
+            ...verifiedFullSeries.slice(0, 6),
+            ...mapSection(data?.trending)
+          ]),
           popular: mapSection(data?.popular),
           topRated: mapSection(data?.topRated),
           airing: mapSection(data?.airing),
           upcoming: mapSection(data?.upcoming),
-          seasonal: mapSection(data?.seasonal)
+          seasonal: mapSection(data?.seasonal),
+          movies: deduplicateCrossApiCatalog([
+            ...verifiedMovies,
+            ...mapSection(data?.movies)
+          ]),
+          classic: deduplicateCrossApiCatalog([
+            ...verifiedFullSeries,
+            ...mapSection(data?.classic)
+          ]),
+          underrated: mapSection(data?.underrated)
         });
       } catch (err) {
         if (cancelled) return;
-        console.warn('[AniList Discovery] Falling back to curated catalog:', err.message);
-        setDiscoveryError('AniList network sync delayed. Showing verified streaming library.');
+        console.warn('[AniList Discovery] Trying Jikan v4 secondary metadata fallback:', err.message);
 
-        // Fallback to curated catalog
+        try {
+          const jikanRes = await fetchJikan('/top/anime?limit=18');
+          if (!cancelled && Array.isArray(jikanRes?.data) && jikanRes.data.length > 0) {
+            const jikanMapped = deduplicateCrossApiCatalog(
+              jikanRes.data.map((item) => mapJikanMediaToAnime(item, curatedDirectMatches)).filter(Boolean)
+            );
+            setDiscoveryData({
+              trending: jikanMapped,
+              popular: jikanMapped,
+              topRated: jikanMapped,
+              airing: jikanMapped.filter((a) => a.simulcast),
+              upcoming: jikanMapped,
+              seasonal: jikanMapped,
+              movies: jikanMapped.filter((a) => a.format === 'Movie'),
+              classic: jikanMapped,
+              underrated: jikanMapped
+            });
+            return;
+          }
+        } catch {
+          // Proceed to curated fallback
+        }
+
+        setDiscoveryError('AniList network sync delayed. Showing verified streaming library.');
         setDiscoveryData({
           trending: CURATED_ANIME,
           popular: CURATED_ANIME,
           topRated: CURATED_ANIME,
           airing: CURATED_ANIME.filter((a) => a.simulcast),
           upcoming: CURATED_ANIME,
-          seasonal: CURATED_ANIME
+          seasonal: CURATED_ANIME,
+          movies: CURATED_ANIME.filter((a) => a.format === 'Movie'),
+          classic: CURATED_ANIME,
+          underrated: CURATED_ANIME
         });
       } finally {
         if (!cancelled) setIsDiscoveryLoading(false);
@@ -488,17 +539,19 @@ export default function App() {
       activeSeasonObj?.episodes?.find((e) => e.ep === targetEp) ||
       activeSeasonObj?.episodes?.[0];
 
-    setWatchProgress((prev) =>
-      updateWatchProgress(prev, {
-        animeId: anime.id,
-        seasonNumber: targetSeason,
-        episodeNumber: targetEp,
-        totalEpisodes: activeSeasonObj?.episodes?.length || anime.episodes || 12,
-        episodeTitle: epObj?.title || `Episode ${targetEp}`,
-        resumeSeconds: existing?.resumeSeconds || 0,
-        durationSeconds: epObj?.duration_seconds || 60
-      })
-    );
+    if (epObj?.stream_url) {
+      setWatchProgress((prev) =>
+        updateWatchProgress(prev, {
+          animeId: anime.id,
+          seasonNumber: targetSeason,
+          episodeNumber: targetEp,
+          totalEpisodes: activeSeasonObj?.episodes?.length || anime.episodes || 12,
+          episodeTitle: epObj?.title || `Episode ${targetEp}`,
+          resumeSeconds: existing?.resumeSeconds || 0,
+          durationSeconds: epObj?.duration_seconds || 0
+        })
+      );
+    }
 
     setActiveScreening({
       anime,
@@ -614,6 +667,68 @@ export default function App() {
     setSyncedUser(null);
   };
 
+  // Pagination: Load next page of AniList items for the active discovery section
+  const handleLoadMoreDiscovery = async () => {
+    if (isLoadingMore) return;
+    setIsLoadingMore(true);
+
+    const currentPage = discoveryPageBySection[discoverySection] || 1;
+    const nextPage = currentPage + 1;
+    const { season, year } = getCurrentSeasonAndYear();
+
+    const sortBySection = {
+      trending: ['TRENDING_DESC', 'POPULARITY_DESC'],
+      popular: ['POPULARITY_DESC'],
+      topRated: ['SCORE_DESC'],
+      airing: ['POPULARITY_DESC'],
+      upcoming: ['POPULARITY_DESC'],
+      seasonal: ['POPULARITY_DESC'],
+      movies: ['POPULARITY_DESC', 'SCORE_DESC'],
+      classic: ['SCORE_DESC'],
+      underrated: ['SCORE_DESC']
+    };
+
+    try {
+      const variables = {
+        page: nextPage,
+        perPage: 18,
+        isAdult: isAdultAllowed,
+        sort: sortBySection[discoverySection] || ['TRENDING_DESC']
+      };
+
+      if (discoverySection === 'movies') {
+        variables.format_in = ['MOVIE'];
+      } else if (discoverySection === 'seasonal') {
+        variables.season = season;
+        variables.seasonYear = year;
+      }
+
+      const data = await queryAniList(ANILIST_SEARCH_QUERY, variables, { useCache: false });
+      const mediaList = data?.Page?.media || [];
+      const mapped = mediaList
+        .map((m) => mapAniListMediaToAnime(m, curatedDirectMatches))
+        .filter(Boolean);
+
+      if (mapped.length > 0) {
+        setDiscoveryData((prev) => ({
+          ...prev,
+          [discoverySection]: deduplicateCrossApiCatalog([
+            ...(prev[discoverySection] || []),
+            ...mapped
+          ])
+        }));
+        setDiscoveryPageBySection((prev) => ({
+          ...prev,
+          [discoverySection]: nextPage
+        }));
+      }
+    } catch (err) {
+      console.warn('[Discovery Load More] Pagination failed:', err.message);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   // Continue Watching list sorted by most recently watched
   const continueWatchingItems = useMemo(() => {
     const raw = Object.values(watchProgress)
@@ -623,6 +738,9 @@ export default function App() {
           ...CURATED_ANIME,
           ...discoveryData.trending,
           ...discoveryData.popular,
+          ...discoveryData.movies,
+          ...discoveryData.classic,
+          ...discoveryData.underrated,
           ...searchResults
         ];
         const anime = pool.find((item) => String(item.id) === String(entry.animeId));
@@ -689,8 +807,7 @@ export default function App() {
                   : 'text-[#94A3B8] hover:text-white'
               }`}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>In-App Direct HD (5)</span>
+              <span>Full Episodes In-App (11)</span>
             </button>
             <button
               type="button"
@@ -753,7 +870,6 @@ export default function App() {
             onClick={() => setShowSyncModal(true)}
             className="rounded-lg border border-[#02A9FF]/40 bg-[#02A9FF]/10 hover:bg-[#02A9FF]/20 px-2 sm:px-2.5 py-1 sm:py-1.5 text-[11px] sm:text-xs font-mono font-semibold text-[#02A9FF] transition flex items-center gap-1.5"
           >
-            <span className="w-2 h-2 rounded-full bg-[#02A9FF]" />
             <span>{syncedUser ? syncedUser.name : 'Sync AniList'}</span>
           </button>
 
@@ -840,8 +956,8 @@ export default function App() {
                   <span>·</span>
                   <span className="text-emerald-400 font-semibold">
                     {heroAnime.availability_type === 'direct-hd'
-                      ? 'Direct HD Stream · Sub & Dub'
-                      : 'Verified Official Preview'}
+                      ? 'Full-Length Episodes · In-App Stream'
+                      : 'Licensed Partner Network'}
                   </span>
                   <span>·</span>
                   <span className="text-amber-400">★ {heroAnime.score}</span>
@@ -1000,9 +1116,12 @@ export default function App() {
                 { id: 'topRated', label: '🏆 Top Rated' },
                 { id: 'airing', label: '📺 Currently Airing' },
                 { id: 'upcoming', label: '⏳ Most Anticipated' },
-                { id: 'seasonal', label: '🌸 Seasonal Anime' }
+                { id: 'seasonal', label: '🌸 Seasonal Anime' },
+                { id: 'movies', label: '🎬 Anime Movies' },
+                { id: 'classic', label: '🏛️ Classic Anime' },
+                { id: 'underrated', label: '💎 Hidden Gems' }
               ].map((sec) => {
-                const active = discoverySection === sec.id && !searchQuery.trim();
+                const active = discoverySection === sec.id && !searchQuery.trim() && activeNav === 'discovery';
                 return (
                   <button
                     key={sec.id}
@@ -1028,7 +1147,7 @@ export default function App() {
 
             <div className="text-xs font-mono text-[#94A3B8]">
               {isDiscoveryLoading || isSearching ? (
-                <span className="text-[#38BDF8] animate-pulse">Querying AniList GraphQL...</span>
+                <span className="text-[#38BDF8]">Querying AniList GraphQL...</span>
               ) : (
                 <span>Showing {displayedItems.length} titles</span>
               )}
@@ -1062,74 +1181,90 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-5">
-              {displayedItems.map((anime, idx) => {
-                const progress = watchProgress[String(anime.id)];
-                const availability = getAvailabilityStatus(anime);
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-5">
+                {displayedItems.map((anime, idx) => {
+                  const progress = watchProgress[String(anime.id)];
+                  const availability = getAvailabilityStatus(anime);
 
-                return (
-                  <article
-                    key={`anime-card-${anime.id}-${idx}`}
-                    onClick={() => handleOpenDetailModal(anime)}
-                    className="group cursor-pointer flex flex-col"
-                  >
-                    {/* 3:4 Vertical Poster Container */}
-                    <div className="relative aspect-[3/4] w-full rounded-xl overflow-hidden bg-[#13121A] border border-white/10 group-hover:border-white/30 transition shadow-lg">
-                      <AnimeArtwork
-                        src={anime.poster_url}
-                        title={anime.title}
-                        japaneseTitle={anime.japanese_title}
-                        studio={anime.studio}
-                        accentColor={anime.banner_color}
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
-                      />
+                  return (
+                    <article
+                      key={`anime-card-${anime.id}-${idx}`}
+                      onClick={() => handleOpenDetailModal(anime)}
+                      className="group cursor-pointer flex flex-col"
+                    >
+                      {/* 3:4 Vertical Poster Container */}
+                      <div className="relative aspect-[3/4] w-full rounded-xl overflow-hidden bg-[#13121A] border border-white/10 group-hover:border-white/30 transition shadow-lg">
+                        <AnimeArtwork
+                          src={anime.poster_url}
+                          title={anime.title}
+                          japaneseTitle={anime.japanese_title}
+                          studio={anime.studio}
+                          accentColor={anime.banner_color}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                        />
 
-                      {/* Subtle Bottom Gradient Scrim */}
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
+                        {/* Subtle Bottom Gradient Scrim */}
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
 
-                      {/* Top Badges */}
-                      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] font-mono">
-                        <span
-                          className={`px-1.5 py-0.5 rounded font-semibold backdrop-blur-md ${
-                            availability.watchableInApp
-                              ? 'bg-emerald-950/90 border border-emerald-400/40 text-emerald-300'
-                              : isMatureAnime(anime)
-                              ? 'bg-rose-950/90 border border-rose-500/40 text-rose-300'
-                              : 'bg-black/80 border border-white/15 text-[#94A3B8]'
-                          }`}
-                        >
-                          {availability.watchableInApp
-                            ? (isMatureAnime(anime) ? '18+ DIRECT HD' : 'DIRECT HD')
-                            : (isMatureAnime(anime) ? '18+ PARTNER' : 'PARTNER PREVIEW')}
-                        </span>
-                        <span className="bg-black/80 backdrop-blur-md px-1.5 py-0.5 rounded text-amber-400 font-semibold border border-white/10">
-                          ★ {anime.score}
-                        </span>
+                        {/* Top Badges */}
+                        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] font-mono">
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-semibold backdrop-blur-md ${
+                              availability.watchableInApp
+                                ? 'bg-emerald-950/90 border border-emerald-400/40 text-emerald-300'
+                                : isMatureAnime(anime)
+                                ? 'bg-rose-950/90 border border-rose-500/40 text-rose-300'
+                                : 'bg-black/80 border border-white/15 text-[#94A3B8]'
+                            }`}
+                          >
+                            {availability.watchableInApp
+                              ? (isMatureAnime(anime) ? '18+ FULL EPISODES' : 'FULL EPISODES')
+                              : (isMatureAnime(anime) ? '18+ PARTNER' : 'PARTNER LICENSE')}
+                          </span>
+                          <span className="bg-black/80 backdrop-blur-md px-1.5 py-0.5 rounded text-amber-400 font-semibold border border-white/10">
+                            ★ {anime.score}
+                          </span>
+                        </div>
+
+                        {/* Bottom Resume Progress Bar if watched */}
+                        {progress && (
+                          <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20">
+                            <div
+                              className="h-full bg-[#F43F5E]"
+                              style={{ width: `${progress.progressPercent}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
 
-                      {/* Bottom Resume Progress Bar if watched */}
-                      {progress && (
-                        <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20">
-                          <div
-                            className="h-full bg-[#F43F5E]"
-                            style={{ width: `${progress.progressPercent}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
+                      {/* Data Points below poster */}
+                      <h3 className="mt-2 text-xs sm:text-sm font-bold text-white group-hover:text-[#F43F5E] transition line-clamp-1">
+                        {anime.title}
+                      </h3>
+                      <div className="mt-0.5 text-[11px] text-[#94A3B8] font-mono truncate">
+                        {anime.format || 'TV'} · {anime.genres?.slice(0, 2).join(' / ') || 'Anime'} ·{' '}
+                        {anime.year}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
 
-                    {/* Data Points below poster */}
-                    <h3 className="mt-2 text-xs sm:text-sm font-bold text-white group-hover:text-[#F43F5E] transition line-clamp-1">
-                      {anime.title}
-                    </h3>
-                    <div className="mt-0.5 text-[11px] text-[#94A3B8] font-mono truncate">
-                      {anime.format || 'TV'} · {anime.genres?.slice(0, 2).join(' / ') || 'Anime'} ·{' '}
-                      {anime.year}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+              {/* Load More Pagination Control for Discovery Sections */}
+              {activeNav === 'discovery' && searchQuery.trim().length === 0 && (
+                <div className="mt-10 flex justify-center">
+                  <button
+                    type="button"
+                    disabled={isLoadingMore}
+                    onClick={handleLoadMoreDiscovery}
+                    className="rounded-xl border border-white/15 bg-[#13121A] hover:bg-white/10 disabled:opacity-50 px-6 py-2.5 text-xs font-semibold text-white transition"
+                  >
+                    {isLoadingMore ? 'Loading More Titles from AniList...' : 'Load More Anime Titles ↓'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
       </main>
@@ -1144,10 +1279,17 @@ export default function App() {
               <span>Anime Discovery & Streaming Engine</span>
             </div>
             <p>
-              Metadata and catalog discovery dynamically powered by the official AniList GraphQL API (<a href="https://graphql.anilist.co" target="_blank" rel="noopener noreferrer" className="text-[#38BDF8] hover:underline">graphql.anilist.co</a>). Verified video streams and legal distributor links.
+              Metadata and catalog discovery dynamically powered by the official AniList GraphQL API (<a href="https://graphql.anilist.co" target="_blank" rel="noopener noreferrer" className="text-[#38BDF8] hover:underline">graphql.anilist.co</a>) & Jikan v4 REST API. Verified video streams and legal distributor links.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setShowAdminModal(true)}
+              className="text-emerald-400 hover:underline font-mono"
+            >
+              Admin & Source Registry
+            </button>
             <button
               type="button"
               onClick={() => setShowSyncModal(true)}
@@ -1168,6 +1310,18 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Role-Based Admin & Media Source Verification Console */}
+      {showAdminModal && (
+        <AdminCatalogModal
+          onClose={() => setShowAdminModal(false)}
+          userSession={userSession}
+          ageState={ageState}
+          discoveryStats={{
+            totalCached: Object.values(discoveryData).reduce((acc, arr) => acc + (arr?.length || 0), 0)
+          }}
+        />
+      )}
 
       {/* Dedicated Anime Detail Modal */}
       {selectedDetailAnime && (
