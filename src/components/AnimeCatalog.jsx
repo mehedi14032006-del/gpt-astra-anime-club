@@ -268,8 +268,8 @@ export default function AnimeCatalog() {
         </p>
       ) : filteredCollection.length > 0 ? (
         <div aria-live="polite" className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:gap-8 lg:grid-cols-3">
-          {filteredCollection.map((anime) => (
-            <AnimeCard anime={anime} key={anime.id} onSelect={openScreening} />
+          {filteredCollection.map((anime, idx) => (
+            <AnimeCard anime={anime} key={`catalog-card-${anime.id}-${idx}`} onSelect={openScreening} />
           ))}
         </div>
       ) : (

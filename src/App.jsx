@@ -1,1579 +1,1504 @@
-import { useEffect, useMemo, useState } from 'react'
-import AnimeArtwork from './components/AnimeArtwork.jsx'
-import ScreeningModal from './components/ScreeningModal.jsx'
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { CURATED_ANIME } from './data/animeData.js';
 import {
-  FREE_FULL_SERIES,
-  GENRE_LIST,
-  GENRE_MAP,
-  INITIAL_COMMENTS,
-  SEEDED_AIRING_NOW,
-  SEEDED_MATURE,
-  SEEDED_MOST_POPULAR,
-  SIMULCAST_SCHEDULE,
-} from './data/animeData.js'
-import {
+  GENRES,
+  FORMAT_FILTERS,
   filterCatalog,
-  isMatureRating,
-  toggleWatchlistItem,
+  isMatureAnime,
   updateWatchProgress,
-  validateAuthCredentials,
-} from './lib/catalogLogic.js'
-import { supabase } from './lib/supabase.js'
-
-const JIKAN_API = 'https://api.jikan.moe/v4'
+  verifyAgeFromBirthDate,
+  getAvailabilityStatus,
+  getAnimeSeasons,
+  formatTimestamp
+} from './lib/catalogLogic.js';
+import {
+  queryAniList,
+  ANILIST_DISCOVERY_QUERY,
+  ANILIST_SEARCH_QUERY,
+  mapAniListMediaToAnime,
+  getCurrentSeasonAndYear
+} from './lib/anilistClient.js';
+import { ScreeningModal } from './components/ScreeningModal.jsx';
+import { AnimeArtwork } from './components/AnimeArtwork.jsx';
+import { AnimeDetailModal } from './components/AnimeDetailModal.jsx';
+import { AniListSearch } from './components/AniListSearch.jsx';
+import { AniListSyncModal } from './components/AniListSyncModal.jsx';
+import { supabase, isSupabaseConfigured } from './lib/supabase.js';
 
 const STORAGE_KEYS = {
-  watchlist: 'kitsune_watchlist_v1',
-  history: 'kitsune_history_v1',
-  ageConfirmed: 'kitsune_age_confirmed_v1',
-  localSession: 'kitsune_user_session_v1',
-  comments: 'kitsune_comments_v1',
-}
-
-function readStorage(key, fallback) {
-  try {
-    const raw = window.localStorage.getItem(key)
-    return raw ? JSON.parse(raw) : fallback
-  } catch {
-    return fallback
-  }
-}
-
-function writeStorage(key, value) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
-function normalizeAnimeItem(item) {
-  if (!item) return null
-  const id = item.id ? String(item.id) : `mal-${item.mal_id}`
-  const title = item.title_english || item.title || item.name || 'Untitled Anime'
-  const genres = Array.isArray(item.genres)
-    ? item.genres.map((g) => (typeof g === 'string' ? g : g?.name)).filter(Boolean)
-    : item.genre
-      ? [item.genre]
-      : ['Anime']
-  const primaryGenre = item.genre || genres[0] || 'Anime'
-  const studio =
-    item.studio ||
-    (Array.isArray(item.studios) && item.studios[0]?.name ? item.studios[0].name : 'Official Studio')
-  const episodeCount = Array.isArray(item.episodes)
-    ? item.episodes.length
-    : Number(item.episodes) || 12
-
-  return {
-    ...item,
-    id,
-    title,
-    name: item.name || title,
-    genre: primaryGenre,
-    genres,
-    studio,
-    episodeCount,
-    is_mature: isMatureRating(item.rating, item.is_mature),
-    has_sub: item.has_sub !== false,
-    has_dub: Boolean(item.has_dub),
-  }
-}
-
-function AnimeCard({ anime, isInWatchlist, watchEntry, onPlay, onToggleWatchlist }) {
-  const normalized = normalizeAnimeItem(anime)
-  const metaParts = [
-    normalized.genre,
-    normalized.is_free_series
-      ? 'Full Series'
-      : normalized.episodeCount
-        ? `${normalized.episodeCount} eps`
-        : normalized.type || 'TV',
-    normalized.score ? `★ ${normalized.score}` : null,
-    normalized.is_mature ? '18+' : null,
-  ].filter(Boolean)
-
-  return (
-    <article className="group relative flex flex-col text-left">
-      <div className="relative overflow-hidden rounded-xl border border-white/10 bg-[#161224] transition-transform duration-200 group-hover:-translate-y-1">
-        <button
-          aria-label={`Play ${normalized.title}`}
-          className="block w-full text-left focus-visible:outline-2 focus-visible:outline-[#f6c453]"
-          onClick={() => onPlay(normalized)}
-          type="button"
-        >
-          <AnimeArtwork anime={normalized} aspectClass="aspect-[3/4]" />
-
-          {/* Hover Play Affordance */}
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/45 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#ff5c8a] text-white shadow-lg">
-              ▶
-            </span>
-          </div>
-
-          {/* Continue Watching Progress Bar if present */}
-          {watchEntry && (
-            <div className="absolute inset-x-0 bottom-0 z-30 h-1.5 bg-black/70">
-              <div
-                className="h-full bg-[#ff5c8a]"
-                style={{ width: `${watchEntry.progressPercent}%` }}
-              />
-            </div>
-          )}
-        </button>
-
-        {/* Quick Watchlist Action Button */}
-        <button
-          aria-label={
-            isInWatchlist
-              ? `Remove ${normalized.title} from Watchlist`
-              : `Add ${normalized.title} to Watchlist`
-          }
-          className={`absolute right-2.5 top-2.5 z-30 flex h-8 w-8 items-center justify-center rounded-lg border text-xs font-bold transition-colors ${
-            isInWatchlist
-              ? 'border-[#f6c453] bg-[#f6c453] text-[#1f1500]'
-              : 'border-white/20 bg-black/65 text-white hover:bg-black/90'
-          }`}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleWatchlist(normalized.id)
-          }}
-          title={isInWatchlist ? 'In My List' : 'Add to My List'}
-          type="button"
-        >
-          {isInWatchlist ? '✓' : '+'}
-        </button>
-      </div>
-
-      {/* Unboxed Card Title & Metadata (Zero-Pill Discipline) */}
-      <button
-        className="mt-2.5 text-left group-hover:text-[#ff5c8a] transition-colors"
-        onClick={() => onPlay(normalized)}
-        type="button"
-      >
-        <h3 className="font-display text-sm font-semibold leading-snug text-white line-clamp-1">
-          {normalized.title}
-        </h3>
-      </button>
-
-      <p className="mt-1 text-xs text-[#a79fc4] font-mono tabular-nums truncate">
-        {watchEntry
-          ? `Ep ${watchEntry.episodeNumber} · ${watchEntry.progressPercent}% watched`
-          : metaParts.join(' · ')}
-      </p>
-    </article>
-  )
-}
+  WATCH_PROGRESS: 'kitsune_watch_progress_v2',
+  WATCHLIST: 'kitsune_watchlist_v2',
+  USER_LISTS: 'kitsune_user_lists_v2',
+  RECENTLY_VIEWED: 'kitsune_recently_viewed_v2',
+  AGE_VERIFICATION: 'kitsune_age_verification_v2',
+  PREMIUM: 'kitsune_premium_v2',
+  SYNCED_ANILIST_USER: 'kitsune_synced_anilist_user_v2'
+};
 
 export default function App() {
-  // Navigation & View State
-  const [activeNav, setActiveNav] = useState('home') // 'home' | 'browse' | 'simulcast' | 'watchlist' | 'premium'
-  const [heroIndex, setHeroIndex] = useState(0)
+  // Direct curated matches dictionary for instant HD stream resolution
+  const curatedDirectMatches = useMemo(() => {
+    const map = {};
+    for (const item of CURATED_ANIME) {
+      if (item.id) map[String(item.id)] = item;
+      if (item.mal_id) map[String(item.mal_id)] = item;
+    }
+    return map;
+  }, []);
+
+  // Main Discovery & Search State
+  const [activeNav, setActiveNav] = useState('discovery'); // 'discovery' | 'search' | 'library' | 'simulcast'
+  const [discoverySection, setDiscoverySection] = useState('trending'); // 'trending' | 'popular' | 'topRated' | 'airing' | 'upcoming' | 'seasonal'
+
+  // AniList Discovery Cached Buckets
+  const [discoveryData, setDiscoveryData] = useState({
+    trending: [],
+    popular: [],
+    topRated: [],
+    airing: [],
+    upcoming: [],
+    seasonal: []
+  });
+  const [isDiscoveryLoading, setIsDiscoveryLoading] = useState(true);
+  const [discoveryError, setDiscoveryError] = useState(null);
 
   // Search & Filter State
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedGenre, setSelectedGenre] = useState('All')
-  const [audioFilter, setAudioFilter] = useState('all') // 'all' | 'sub' | 'dub'
-  const [onlyFree, setOnlyFree] = useState(false)
-  const [sortBy, setSortBy] = useState('popular')
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedGenre, setSelectedGenre] = useState('All');
+  const [selectedFormat, setSelectedFormat] = useState('All');
+  const [selectedSeason, setSelectedSeason] = useState('All');
+  const [selectedYear, setSelectedYear] = useState('All');
+  const [selectedSort, setSelectedSort] = useState('TRENDING_DESC');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
-  // Catalog Rows State (Pre-seeded immediately for 0ms first paint, enriched via Jikan API)
-  const [freeSeriesList] = useState(() => FREE_FULL_SERIES.map(normalizeAnimeItem))
-  const [airingList, setAiringList] = useState(() => SEEDED_AIRING_NOW.map(normalizeAnimeItem))
-  const [popularList, setPopularList] = useState(() => SEEDED_MOST_POPULAR.map(normalizeAnimeItem))
-  const [matureList, setMatureList] = useState(() => SEEDED_MATURE.map(normalizeAnimeItem))
-  const [liveSearchResults, setLiveSearchResults] = useState([])
-  const [isSearchingApi, setIsSearchingApi] = useState(false)
+  // Dynamic AniList Search Results
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
 
-  // Simulcast Day State
-  const [selectedDay, setSelectedDay] = useState('Saturday')
+  // Detail Modal & Screening Modal
+  const [selectedDetailAnime, setSelectedDetailAnime] = useState(null);
+  const [activeScreening, setActiveScreening] = useState(null);
 
-  // Persisted User State (Watchlist, Continue Watching, Age Confirmation, Session, Comments)
-  const [watchlistIds, setWatchlistIds] = useState(() =>
-    readStorage(STORAGE_KEYS.watchlist, ['fb0', 'fb1', 'mal-52991']),
-  )
-  const [watchHistory, setWatchHistory] = useState(() =>
-    readStorage(STORAGE_KEYS.history, [
-      {
-        animeId: 'fb0',
-        episodeNumber: 1,
-        episodeTitle: 'The Strongest Man',
-        progressPercent: 65,
-        updatedAt: 1700000000000,
-      },
-      {
-        animeId: 'fb1',
-        episodeNumber: 3,
-        episodeTitle: 'Prepare for the Interview',
-        progressPercent: 40,
-        updatedAt: 1699990000000,
-      },
-    ]),
-  )
-  const [ageConfirmed, setAgeConfirmed] = useState(() =>
-    readStorage(STORAGE_KEYS.ageConfirmed, false),
-  )
-  const [userSession, setUserSession] = useState(() =>
-    readStorage(STORAGE_KEYS.localSession, null),
-  )
-  const [commentsMap, setCommentsMap] = useState(() =>
-    readStorage(STORAGE_KEYS.comments, INITIAL_COMMENTS),
-  )
-
-  // Modal States
-  const [activeScreening, setActiveScreening] = useState(null) // { anime, episodeIndex }
-  const [pendingMatureItem, setPendingMatureItem] = useState(null)
-  const [authModalOpen, setAuthModalOpen] = useState(false)
-  const [authMode, setAuthMode] = useState('login') // 'login' | 'signup'
-  const [authEmail, setAuthEmail] = useState('')
-  const [authPassword, setAuthPassword] = useState('')
-  const [authMessage, setAuthMessage] = useState({ type: '', text: '' })
-  const [statusBanner, setStatusBanner] = useState('')
-
-  const userPlan = userSession?.plan === 'pm' ? 'pm' : 'free'
-
-  // Sync persisted state to localStorage
-  useEffect(() => {
-    writeStorage(STORAGE_KEYS.watchlist, watchlistIds)
-  }, [watchlistIds])
-
-  useEffect(() => {
-    writeStorage(STORAGE_KEYS.history, watchHistory)
-  }, [watchHistory])
-
-  useEffect(() => {
-    writeStorage(STORAGE_KEYS.ageConfirmed, ageConfirmed)
-  }, [ageConfirmed])
-
-  useEffect(() => {
-    writeStorage(STORAGE_KEYS.localSession, userSession)
-  }, [userSession])
-
-  useEffect(() => {
-    writeStorage(STORAGE_KEYS.comments, commentsMap)
-  }, [commentsMap])
-
-  // Check URL query parameters (?checkout=success)
-  useEffect(() => {
-    if (window.location.search.includes('checkout=success')) {
-      setUserSession((prev) => ({
-        email: prev?.email || 'member@kitsune.plus',
-        plan: 'pm',
-      }))
-      setStatusBanner('Welcome to Kitsune+ Premium! Ad-free 4K Ultra HD streaming is now active.')
-      window.history.replaceState(null, '', '/')
+  // AniList Account Sync Modal
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncedUser, setSyncedUser] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.SYNCED_ANILIST_USER);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
     }
-  }, [])
+  });
 
-  // Background Jikan API enrichment (merges live MyAnimeList data when reachable without blocking UI)
+  // Strict 18+ Age Verification & Minor Protection State
+  const [ageState, setAgeState] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.AGE_VERIFICATION);
+      if (raw) return JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+    return {
+      verifiedAdult: false,
+      isMinorLock: false,
+      safeModeEnabled: true,
+      verifiedAge: null,
+      regionMinAge: 18
+    };
+  });
+
+  // DOB Form State inside 18+ Verification Gate
+  const [dobYear, setDobYear] = useState('2000');
+  const [dobMonth, setDobMonth] = useState('04');
+  const [dobDay, setDobDay] = useState('15');
+  const [regionMinAge, setRegionMinAge] = useState(18);
+  const [ageGateError, setAgeGateError] = useState('');
+  const [pendingMatureSelect, setPendingMatureSelect] = useState(null);
+  const [showAgeModal, setShowAgeModal] = useState(false);
+
+  // Categorized User Lists (Watching, Plan to Watch, Completed, Favorites, Dropped, On Hold)
+  const [userLists, setUserLists] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.USER_LISTS);
+      if (raw) return JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+    return {
+      watching: ['52991'],
+      planToWatch: ['52299'],
+      completed: ['32281'],
+      favorites: ['52991', '50265'],
+      onHold: [],
+      dropped: []
+    };
+  });
+
+  // Recently Viewed History
+  const [recentlyViewed, setRecentlyViewed] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.RECENTLY_VIEWED);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [isPremium, setIsPremium] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.PREMIUM) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const [watchProgress, setWatchProgress] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.WATCH_PROGRESS);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Auth & Premium Modals
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [userSession, setUserSession] = useState(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authStatusMsg, setAuthStatusMsg] = useState('');
+
+  // Persist State to LocalStorage
   useEffect(() => {
-    let active = true
-    async function enrichFromJikan() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.WATCH_PROGRESS, JSON.stringify(watchProgress));
+    } catch {
+      // ignore
+    }
+  }, [watchProgress]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.USER_LISTS, JSON.stringify(userLists));
+    } catch {
+      // ignore
+    }
+  }, [userLists]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECENTLY_VIEWED, JSON.stringify(recentlyViewed));
+    } catch {
+      // ignore
+    }
+  }, [recentlyViewed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.AGE_VERIFICATION, JSON.stringify(ageState));
+    } catch {
+      // ignore
+    }
+  }, [ageState]);
+
+  useEffect(() => {
+    try {
+      if (syncedUser) {
+        localStorage.setItem(STORAGE_KEYS.SYNCED_ANILIST_USER, JSON.stringify(syncedUser));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SYNCED_ANILIST_USER);
+      }
+    } catch {
+      // ignore
+    }
+  }, [syncedUser]);
+
+  // Adult content allowed flag
+  const isAdultAllowed = ageState.verifiedAdult && !ageState.safeModeEnabled && !ageState.isMinorLock;
+
+  // 1. Fetch AniList Discovery Sections on Load
+  useEffect(() => {
+    let cancelled = false;
+    setIsDiscoveryLoading(true);
+    setDiscoveryError(null);
+
+    async function fetchDiscovery() {
+      const { season, year } = getCurrentSeasonAndYear();
+
       try {
-        const res = await fetch(`${JIKAN_API}/top/anime?filter=airing&sfw=true&limit=12`)
-        if (!res.ok) return
-        const json = await res.json()
-        if (active && Array.isArray(json?.data) && json.data.length > 0) {
-          const normalized = json.data.map(normalizeAnimeItem)
-          setAiringList((prev) => {
-            const existingIds = new Set(prev.map((i) => i.mal_id))
-            const merged = [...prev]
-            normalized.forEach((item) => {
-              if (!existingIds.has(item.mal_id)) merged.push(item)
+        const data = await queryAniList(ANILIST_DISCOVERY_QUERY, {
+          season,
+          seasonYear: year,
+          isAdult: isAdultAllowed
+        });
+
+        if (cancelled) return;
+
+        const mapSection = (pageData) => {
+          const media = pageData?.media || [];
+          const seen = new Set();
+          return media
+            .filter((m) => {
+              if (!m || !m.id || seen.has(String(m.id))) return false;
+              seen.add(String(m.id));
+              return true;
             })
-            return merged.slice(0, 12)
-          })
-        }
-      } catch {
-        // Seeded catalog remains active
-      }
-    }
-    enrichFromJikan()
-    return () => {
-      active = false
-    }
-  }, [])
+            .map((m) => mapAniListMediaToAnime(m, curatedDirectMatches))
+            .filter(Boolean);
+        };
 
-  // Live Jikan search when user types a custom query
-  useEffect(() => {
-    const trimmed = searchQuery.trim()
-    if (trimmed.length < 3) {
-      setLiveSearchResults([])
-      setIsSearchingApi(false)
-      return undefined
-    }
+        setDiscoveryData({
+          trending: mapSection(data?.trending),
+          popular: mapSection(data?.popular),
+          topRated: mapSection(data?.topRated),
+          airing: mapSection(data?.airing),
+          upcoming: mapSection(data?.upcoming),
+          seasonal: mapSection(data?.seasonal)
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[AniList Discovery] Falling back to curated catalog:', err.message);
+        setDiscoveryError('AniList network sync delayed. Showing verified streaming library.');
 
-    let active = true
-    setIsSearchingApi(true)
-    const timer = window.setTimeout(async () => {
-      try {
-        const genreParam =
-          selectedGenre !== 'All' && GENRE_MAP[selectedGenre]
-            ? `&genres=${GENRE_MAP[selectedGenre]}`
-            : ''
-        const res = await fetch(
-          `${JIKAN_API}/anime?sfw=true&order_by=popularity&limit=12&q=${encodeURIComponent(trimmed)}${genreParam}`,
-        )
-        if (!res.ok) throw new Error('Search request throttled')
-        const json = await res.json()
-        if (active && Array.isArray(json?.data)) {
-          setLiveSearchResults(json.data.map(normalizeAnimeItem))
-        }
-      } catch {
-        // Local catalog search handles results seamlessly
+        // Fallback to curated catalog
+        setDiscoveryData({
+          trending: CURATED_ANIME,
+          popular: CURATED_ANIME,
+          topRated: CURATED_ANIME,
+          airing: CURATED_ANIME.filter((a) => a.simulcast),
+          upcoming: CURATED_ANIME,
+          seasonal: CURATED_ANIME
+        });
       } finally {
-        if (active) setIsSearchingApi(false)
+        if (!cancelled) setIsDiscoveryLoading(false);
       }
-    }, 450)
+    }
+
+    fetchDiscovery();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdultAllowed, curatedDirectMatches]);
+
+  // 2. Execute Dynamic AniList Search when query or filters change
+  useEffect(() => {
+    const hasSearch = searchQuery.trim().length > 0;
+    const hasFilters =
+      selectedGenre !== 'All' ||
+      selectedFormat !== 'All' ||
+      selectedSeason !== 'All' ||
+      selectedYear !== 'All' ||
+      selectedSort !== 'TRENDING_DESC';
+
+    if (!hasSearch && !hasFilters) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSearching(true);
+    setSearchError(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const variables = {
+          page: 1,
+          perPage: 24,
+          isAdult: isAdultAllowed,
+          sort: [selectedSort]
+        };
+
+        if (hasSearch) {
+          variables.search = searchQuery.trim();
+        }
+        if (selectedGenre !== 'All') {
+          variables.genre_in = [selectedGenre];
+        }
+        if (selectedFormat !== 'All') {
+          variables.format_in = [selectedFormat];
+        }
+        if (selectedSeason !== 'All') {
+          variables.season = selectedSeason;
+        }
+        if (selectedYear !== 'All') {
+          const numYear = parseInt(selectedYear, 10);
+          if (!Number.isNaN(numYear)) {
+            variables.seasonYear = numYear;
+          }
+        }
+
+        const data = await queryAniList(ANILIST_SEARCH_QUERY, variables);
+        if (cancelled) return;
+
+        const mediaList = data?.Page?.media || [];
+        const seen = new Set();
+        const deduped = mediaList.filter((m) => {
+          if (!m || !m.id || seen.has(String(m.id))) return false;
+          seen.add(String(m.id));
+          return true;
+        });
+        const mapped = deduped.map((m) => mapAniListMediaToAnime(m, curatedDirectMatches)).filter(Boolean);
+        setSearchResults(mapped);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[AniList Search] Search failed:', err.message);
+          setSearchError('Search query failed or rate limited. Please try a different query.');
+          setSearchResults([]);
+        }
+      } finally {
+        if (!cancelled) setIsSearching(false);
+      }
+    }, 350);
 
     return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [searchQuery, selectedGenre])
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    searchQuery,
+    selectedGenre,
+    selectedFormat,
+    selectedSeason,
+    selectedYear,
+    selectedSort,
+    isAdultAllowed,
+    curatedDirectMatches
+  ]);
 
-  // Master dictionary of all anime titles by ID
-  const allAnimeCatalog = useMemo(() => {
-    const map = new Map()
-    ;[
-      ...freeSeriesList,
-      ...airingList,
-      ...popularList,
-      ...matureList,
-      ...liveSearchResults,
-    ].forEach((item) => {
-      if (!item) return
-      const norm = normalizeAnimeItem(item)
-      if (!map.has(norm.id)) {
-        map.set(norm.id, norm)
+  // Current active display items based on navigation & discovery tabs
+  const displayedItems = useMemo(() => {
+    let list = [];
+
+    // 1. If actively searching or filtering, show searchResults
+    if (searchQuery.trim().length > 0 || selectedGenre !== 'All' || selectedFormat !== 'All' || selectedSeason !== 'All' || selectedYear !== 'All') {
+      list = searchResults;
+    } else if (activeNav === 'direct-streams') {
+      // 2. In-App Direct Streams Navigation (5 verified productions with genuine distinct episode video files)
+      list = CURATED_ANIME.filter((a) => a.availability_type === 'direct-hd');
+    } else if (activeNav === 'simulcast') {
+      // 3. Simulcast Navigation
+      list = discoveryData.airing.length > 0
+        ? discoveryData.airing
+        : CURATED_ANIME.filter((a) => a.simulcast);
+    } else if (activeNav === 'library') {
+      // 4. User Library / Personalization Navigation
+      const allSavedIds = new Set([
+        ...userLists.watching,
+        ...userLists.planToWatch,
+        ...userLists.completed,
+        ...userLists.favorites,
+        ...userLists.onHold,
+        ...userLists.dropped
+      ]);
+
+      const matched = [];
+      const idMap = new Map();
+
+      // Look up in discovery cache, curated items, and search cache
+      const pool = [
+        ...discoveryData.trending,
+        ...discoveryData.popular,
+        ...discoveryData.topRated,
+        ...CURATED_ANIME,
+        ...searchResults
+      ];
+
+      for (const item of pool) {
+        if (allSavedIds.has(String(item.id)) && !idMap.has(String(item.id))) {
+          idMap.set(String(item.id), item);
+          matched.push(item);
+        }
       }
-    })
-    return Array.from(map.values())
-  }, [freeSeriesList, airingList, popularList, matureList, liveSearchResults])
 
-  // Filtered Catalog for Search / Browse
-  const filteredCatalog = useMemo(() => {
-    return filterCatalog(allAnimeCatalog, {
-      query: searchQuery,
-      genre: selectedGenre,
-      audioFilter,
-      onlyFree,
-      sortBy,
-    })
-  }, [allAnimeCatalog, searchQuery, selectedGenre, audioFilter, onlyFree, sortBy])
+      list = matched;
+    } else {
+      // 5. Discovery Navigation: Selected Discovery Section
+      const currentSectionList = discoveryData[discoverySection] || [];
+      list = currentSectionList.length > 0 ? currentSectionList : CURATED_ANIME;
+    }
 
-  const filteredFreeSeries = useMemo(() => {
-    return filterCatalog(freeSeriesList, {
-      query: searchQuery,
-      genre: selectedGenre,
-      audioFilter,
-      sortBy,
-    })
-  }, [freeSeriesList, searchQuery, selectedGenre, audioFilter, sortBy])
+    // Strictly deduplicate by ID to guarantee unique React child keys
+    const seen = new Set();
+    return list.filter((item) => {
+      if (!item || !item.id) return false;
+      const key = String(item.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [
+    searchQuery,
+    selectedGenre,
+    selectedFormat,
+    selectedSeason,
+    selectedYear,
+    searchResults,
+    activeNav,
+    discoverySection,
+    discoveryData,
+    userLists
+  ]);
 
-  // Watchlist & Continue Watching resolved items
-  const watchlistAnime = useMemo(() => {
-    return watchlistIds
-      .map((id) => allAnimeCatalog.find((a) => String(a.id) === String(id)))
-      .filter(Boolean)
-  }, [watchlistIds, allAnimeCatalog])
+  // Spotlight Featured Hero (Frieren or first discovery item)
+  const heroAnime = useMemo(() => {
+    return discoveryData.trending[0] || CURATED_ANIME[0];
+  }, [discoveryData.trending]);
 
+  // Track recently viewed anime
+  const trackRecentlyViewed = useCallback((anime) => {
+    if (!anime?.id) return;
+    setRecentlyViewed((prev) => {
+      const filtered = prev.filter((item) => String(item.id) !== String(anime.id));
+      return [anime, ...filtered].slice(0, 10);
+    });
+  }, []);
+
+  // Strict 18+ Adult Gating before opening any Mature anime
+  const handleOpenAnime = useCallback((anime, seasonNumber = 1, episodeNumber = 1) => {
+    if (!anime) return;
+    trackRecentlyViewed(anime);
+
+    if (isMatureAnime(anime)) {
+      if (ageState.isMinorLock) {
+        setAgeGateError(
+          'Access Denied: Minor protection lock is active for this session. 18+ adult anime cannot be accessed.'
+        );
+        setPendingMatureSelect(null);
+        setShowAgeModal(true);
+        return;
+      }
+      if (!ageState.verifiedAdult || ageState.safeModeEnabled) {
+        setAgeGateError('');
+        setPendingMatureSelect({ anime, seasonNumber, episodeNumber });
+        setShowAgeModal(true);
+        return;
+      }
+    }
+
+    const existing = watchProgress[String(anime.id)];
+    const targetSeason = existing?.seasonNumber || seasonNumber || 1;
+    const targetEp = existing?.episodeNumber || episodeNumber || 1;
+    const seasons = getAnimeSeasons(anime);
+    const activeSeasonObj =
+      seasons.find((s) => s.season_number === targetSeason) || seasons[0];
+    const epObj =
+      activeSeasonObj?.episodes?.find((e) => e.ep === targetEp) ||
+      activeSeasonObj?.episodes?.[0];
+
+    setWatchProgress((prev) =>
+      updateWatchProgress(prev, {
+        animeId: anime.id,
+        seasonNumber: targetSeason,
+        episodeNumber: targetEp,
+        totalEpisodes: activeSeasonObj?.episodes?.length || anime.episodes || 12,
+        episodeTitle: epObj?.title || `Episode ${targetEp}`,
+        resumeSeconds: existing?.resumeSeconds || 0,
+        durationSeconds: epObj?.duration_seconds || 60
+      })
+    );
+
+    setActiveScreening({
+      anime,
+      seasonNumber: targetSeason,
+      episodeNumber: targetEp
+    });
+  }, [ageState, watchProgress, trackRecentlyViewed]);
+
+  const handleOpenDetailModal = useCallback((rawAnime) => {
+    if (!rawAnime) return;
+    const anime = rawAnime.rawMedia || rawAnime.coverImage?.large || typeof rawAnime.title === 'object'
+      ? mapAniListMediaToAnime(rawAnime, curatedDirectMatches)
+      : rawAnime;
+
+    trackRecentlyViewed(anime);
+
+    if (isMatureAnime(anime)) {
+      if (ageState.isMinorLock) {
+        setAgeGateError('Access Denied: 18+ adult anime cannot be viewed while Minor Protection is active.');
+        setShowAgeModal(true);
+        return;
+      }
+      if (!ageState.verifiedAdult || ageState.safeModeEnabled) {
+        setPendingMatureSelect({ detailAnime: anime });
+        setShowAgeModal(true);
+        return;
+      }
+    }
+
+    setSelectedDetailAnime(anime);
+  }, [ageState, curatedDirectMatches, trackRecentlyViewed]);
+
+  const handleUpdateUserListStatus = useCallback((animeId, newCategory) => {
+    const idStr = String(animeId);
+    setUserLists((prev) => {
+      const next = {
+        watching: prev.watching.filter((id) => id !== idStr),
+        planToWatch: prev.planToWatch.filter((id) => id !== idStr),
+        completed: prev.completed.filter((id) => id !== idStr),
+        favorites: prev.favorites.filter((id) => id !== idStr),
+        onHold: (prev.onHold || []).filter((id) => id !== idStr),
+        dropped: (prev.dropped || []).filter((id) => id !== idStr)
+      };
+
+      if (newCategory && newCategory !== 'none' && next[newCategory]) {
+        next[newCategory].push(idStr);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleVerifyAgeSubmit = (e) => {
+    e.preventDefault();
+    const result = verifyAgeFromBirthDate(
+      {
+        year: Number(dobYear),
+        month: Number(dobMonth),
+        day: Number(dobDay),
+        minAge: Number(regionMinAge)
+      },
+      new Date()
+    );
+
+    if (!result.validInput) {
+      setAgeGateError(result.error);
+      return;
+    }
+
+    if (!result.eligible) {
+      // Minor lock active
+      setAgeState({
+        verifiedAdult: false,
+        isMinorLock: true,
+        safeModeEnabled: true,
+        verifiedAge: result.age,
+        regionMinAge: Number(regionMinAge)
+      });
+      setPendingMatureSelect(null);
+      setAgeGateError(result.error);
+      return;
+    }
+
+    // Adult verified
+    setAgeState({
+      verifiedAdult: true,
+      isMinorLock: false,
+      safeModeEnabled: false,
+      verifiedAge: result.age,
+      regionMinAge: Number(regionMinAge)
+    });
+    setAgeGateError('');
+    setShowAgeModal(false);
+
+    if (pendingMatureSelect?.detailAnime) {
+      setSelectedDetailAnime(pendingMatureSelect.detailAnime);
+    } else if (pendingMatureSelect?.anime) {
+      handleOpenAnime(
+        pendingMatureSelect.anime,
+        pendingMatureSelect.seasonNumber,
+        pendingMatureSelect.episodeNumber
+      );
+    }
+    setPendingMatureSelect(null);
+  };
+
+  const handleImportAniListLists = ({ user, lists }) => {
+    setSyncedUser(user);
+    setUserLists(lists);
+    setShowSyncModal(false);
+  };
+
+  const handleDisconnectAniList = () => {
+    setSyncedUser(null);
+  };
+
+  // Continue Watching list sorted by most recently watched
   const continueWatchingItems = useMemo(() => {
-    return watchHistory
+    const raw = Object.values(watchProgress)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       .map((entry) => {
-        const anime = allAnimeCatalog.find((a) => String(a.id) === String(entry.animeId))
-        return anime ? { anime, entry } : null
+        const pool = [
+          ...CURATED_ANIME,
+          ...discoveryData.trending,
+          ...discoveryData.popular,
+          ...searchResults
+        ];
+        const anime = pool.find((item) => String(item.id) === String(entry.animeId));
+        if (!anime) return null;
+        if (!isAdultAllowed && isMatureAnime(anime)) return null;
+        return { anime, progress: entry };
       })
-      .filter(Boolean)
-  }, [watchHistory, allAnimeCatalog])
+      .filter(Boolean);
 
-  const heroSpotlights = useMemo(() => {
-    return [freeSeriesList[0], freeSeriesList[1], airingList[0], freeSeriesList[9]].filter(Boolean)
-  }, [freeSeriesList, airingList])
-
-  const currentHero = heroSpotlights[heroIndex % heroSpotlights.length] || freeSeriesList[0]
-
-  // Handlers
-  function handlePlayAnime(anime, episodeIndex = 0) {
-    const normalized = normalizeAnimeItem(anime)
-    if (normalized.is_mature && !ageConfirmed) {
-      setPendingMatureItem({ anime: normalized, episodeIndex })
-      return
-    }
-    setActiveScreening({ anime: normalized, episodeIndex })
-    const ep = normalized.episodes?.[episodeIndex]
-    setWatchHistory((prev) =>
-      updateWatchProgress(prev, {
-        animeId: normalized.id,
-        episodeNumber: episodeIndex + 1,
-        episodeTitle: ep?.name || `Episode ${episodeIndex + 1}`,
-        progressPercent: 25,
-      }),
-    )
-  }
-
-  function handleConfirmAge() {
-    setAgeConfirmed(true)
-    if (supabase && userSession) {
-      supabase.rpc('confirm_age').catch(() => {})
-    }
-    if (pendingMatureItem) {
-      const { anime, episodeIndex } = pendingMatureItem
-      setPendingMatureItem(null)
-      setActiveScreening({ anime, episodeIndex })
-      setWatchHistory((prev) =>
-        updateWatchProgress(prev, {
-          animeId: anime.id,
-          episodeNumber: episodeIndex + 1,
-          episodeTitle: `Episode ${episodeIndex + 1}`,
-          progressPercent: 25,
-        }),
-      )
-    }
-  }
-
-  function handleToggleWatchlist(animeId) {
-    setWatchlistIds((prev) => toggleWatchlistItem(prev, animeId))
-  }
-
-  function handleEpisodeProgress(episodeNumber, episodeTitle, progressPercent) {
-    if (!activeScreening?.anime) return
-    setWatchHistory((prev) =>
-      updateWatchProgress(prev, {
-        animeId: activeScreening.anime.id,
-        episodeNumber,
-        episodeTitle,
-        progressPercent,
-      }),
-    )
-  }
-
-  function handleAddComment(animeId, newComment) {
-    setCommentsMap((prev) => ({
-      ...prev,
-      [animeId]: [newComment, ...(prev[animeId] || [])],
-    }))
-  }
-
-  async function handleAuthSubmit(event) {
-    event.preventDefault()
-    const validation = validateAuthCredentials({
-      email: authEmail,
-      password: authPassword,
-      mode: authMode,
-    })
-
-    if (!validation.valid) {
-      setAuthMessage({ type: 'error', text: validation.error })
-      return
-    }
-
-    setAuthMessage({ type: 'info', text: 'Signing in to Kitsune+…' })
-
-    if (supabase) {
-      try {
-        const { data, error } =
-          authMode === 'signup'
-            ? await supabase.auth.signUp({ email: validation.email, password: authPassword })
-            : await supabase.auth.signInWithPassword({
-                email: validation.email,
-                password: authPassword,
-              })
-        if (!error && data?.session) {
-          setUserSession({
-            email: validation.email,
-            plan: 'free',
-            accessToken: data.session.access_token,
-          })
-          setAuthModalOpen(false)
-          setAuthPassword('')
-          setAuthMessage({ type: '', text: '' })
-          return
-        }
-      } catch {
-        // Fall through to local member session so sign-in always succeeds in preview
-      }
-    }
-
-    // Instant Member Session
-    setUserSession({
-      email: validation.email,
-      plan: userSession?.plan || 'free',
-    })
-    setAuthModalOpen(false)
-    setAuthPassword('')
-    setAuthMessage({ type: '', text: '' })
-    setStatusBanner(
-      authMode === 'signup'
-        ? `Account created for ${validation.email}. Your watchlist is synced.`
-        : `Welcome back, ${validation.email}.`,
-    )
-  }
-
-  async function handleUpgradePremium() {
-    if (userPlan === 'pm') return
-    if (!userSession) {
-      setAuthModalOpen(true)
-      setAuthMessage({
-        type: 'info',
-        text: 'Sign in or create a free account first to activate Kitsune+ Premium.',
-      })
-      return
-    }
-
-    if (userSession.accessToken) {
-      try {
-        const res = await fetch('/api/checkout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${userSession.accessToken}` },
-        })
-        const data = await res.json()
-        if (data?.url) {
-          window.location.href = data.url
-          return
-        }
-      } catch {
-        // Fallback to instant preview upgrade
-      }
-    }
-
-    setUserSession((prev) => ({
-      ...prev,
-      plan: 'pm',
-    }))
-    setStatusBanner(
-      'Kitsune+ Premium activated! Enjoy zero banner ads, 4K Ultra HD playback, and simulcast early access.',
-    )
-  }
-
-  const isFiltering =
-    searchQuery.trim().length > 0 ||
-    selectedGenre !== 'All' ||
-    audioFilter !== 'all' ||
-    onlyFree
+    const seen = new Set();
+    return raw.filter((item) => {
+      const id = String(item.anime.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [watchProgress, discoveryData, searchResults, isAdultAllowed]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0914] text-[#f5f1ff]">
-      {/* Strict 3-Zone Top Navigation Bar Contract */}
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 md:gap-8 border-b border-white/10 bg-[#0b0914]/95 px-4 sm:px-6 py-3.5 backdrop-blur-md">
-        {/* Zone 1: Single Text Wordmark */}
-        <a
-          className="font-display text-xl font-extrabold tracking-tight text-white whitespace-nowrap shrink-0"
-          href="#top"
-          onClick={(e) => {
-            e.preventDefault()
-            setActiveNav('home')
-            setSearchQuery('')
-            setSelectedGenre('All')
-          }}
-        >
-          Kitsune<span className="text-[#ff5c8a]">+</span>
-        </a>
+    <div className="min-h-screen w-full overflow-x-hidden bg-[#0B0A0E] text-[#F8FAFC] flex flex-col selection:bg-[#F43F5E] selection:text-white">
+      {/* Top Bar: Brand Left, Primary Navigation Center, Search & Account Actions Right */}
+      <header className="sticky top-0 z-30 min-h-16 py-2.5 border-b border-white/10 bg-[#0B0A0E]/90 backdrop-blur-xl px-3 sm:px-8 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+        {/* Zone 1: Brand Identity */}
+        <div className="flex items-center gap-3 sm:gap-6 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveNav('discovery');
+              setSearchQuery('');
+              setSelectedGenre('All');
+              setSelectedFormat('All');
+            }}
+            className="text-lg sm:text-xl font-extrabold tracking-tight text-white flex items-center gap-0.5"
+          >
+            <span>Kitsune</span>
+            <span className="text-[#F43F5E]">+</span>
+          </button>
 
-        {/* Zone 2: 5 Clean Single-Line Navigation Links */}
-        <nav
-          aria-label="Primary navigation"
-          className="flex items-center gap-4 sm:gap-6 md:gap-7 text-xs sm:text-sm font-medium text-[#a79fc4] overflow-x-auto"
-        >
-          <button
-            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeNav === 'home'
-                ? 'border-[#ff5c8a] text-white'
-                : 'border-transparent hover:text-white'
-            }`}
-            onClick={() => setActiveNav('home')}
-            type="button"
-          >
-            Home
-          </button>
-          <button
-            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeNav === 'browse'
-                ? 'border-[#ff5c8a] text-white'
-                : 'border-transparent hover:text-white'
-            }`}
-            onClick={() => setActiveNav('browse')}
-            type="button"
-          >
-            Browse Catalog
-          </button>
-          <button
-            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeNav === 'simulcast'
-                ? 'border-[#ff5c8a] text-white'
-                : 'border-transparent hover:text-white'
-            }`}
-            onClick={() => setActiveNav('simulcast')}
-            type="button"
-          >
-            Simulcast
-          </button>
-          <button
-            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeNav === 'watchlist'
-                ? 'border-[#ff5c8a] text-white'
-                : 'border-transparent hover:text-white'
-            }`}
-            onClick={() => setActiveNav('watchlist')}
-            type="button"
-          >
-            My List ({watchlistIds.length})
-          </button>
-          <button
-            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeNav === 'premium'
-                ? 'border-[#f6c453] text-[#f6c453]'
-                : 'border-transparent hover:text-white'
-            }`}
-            onClick={() => setActiveNav('premium')}
-            type="button"
-          >
-            Premium
-          </button>
-        </nav>
+          {/* Primary Navigation Links */}
+          <nav className="flex items-center gap-2.5 sm:gap-5 text-xs sm:text-sm font-medium" aria-label="Primary navigation">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveNav('discovery');
+                setSearchQuery('');
+              }}
+              className={`transition py-1 ${
+                activeNav === 'discovery'
+                  ? 'text-white border-b-2 border-[#F43F5E]'
+                  : 'text-[#94A3B8] hover:text-white'
+              }`}
+            >
+              AniList Discovery
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveNav('direct-streams');
+                setSearchQuery('');
+              }}
+              className={`transition py-1 flex items-center gap-1.5 ${
+                activeNav === 'direct-streams'
+                  ? 'text-white border-b-2 border-emerald-400 font-semibold'
+                  : 'text-[#94A3B8] hover:text-white'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>In-App Direct HD (5)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveNav('simulcast');
+                setSearchQuery('');
+              }}
+              className={`transition py-1 ${
+                activeNav === 'simulcast'
+                  ? 'text-white border-b-2 border-[#F43F5E]'
+                  : 'text-[#94A3B8] hover:text-white'
+              }`}
+            >
+              Simulcasts
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveNav('library');
+                setSearchQuery('');
+              }}
+              className={`transition py-1 ${
+                activeNav === 'library'
+                  ? 'text-white border-b-2 border-[#F43F5E]'
+                  : 'text-[#94A3B8] hover:text-white'
+              }`}
+            >
+              My Library ({userLists.watching.length + userLists.planToWatch.length + userLists.completed.length})
+            </button>
+          </nav>
+        </div>
 
-        {/* Zone 3: 1 Primary Action Button */}
-        <div className="flex items-center shrink-0">
+        {/* Zone 2: Instant AniList Search & Autocomplete Input */}
+        <div className="order-3 md:order-2 w-full md:w-auto md:flex-1 md:max-w-xl mx-auto">
+          <AniListSearch
+            query={searchQuery}
+            onQueryChange={setSearchQuery}
+            onSelectAnime={(anime) => handleOpenDetailModal(anime)}
+            isAdultAllowed={isAdultAllowed}
+            selectedGenre={selectedGenre}
+            onSelectGenre={setSelectedGenre}
+            selectedFormat={selectedFormat}
+            onSelectFormat={setSelectedFormat}
+            selectedSeason={selectedSeason}
+            onSelectSeason={setSelectedSeason}
+            selectedYear={selectedYear}
+            onSelectYear={setSelectedYear}
+            selectedSort={selectedSort}
+            onSelectSort={setSelectedSort}
+            showFilters={showAdvancedFilters}
+            onToggleFilters={() => setShowAdvancedFilters(!showAdvancedFilters)}
+          />
+        </div>
+
+        {/* Zone 3: AniList Sync, 18+ Age Safety, and Account CTA */}
+        <div className="order-2 md:order-3 flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* AniList Profile Sync Button */}
+          <button
+            type="button"
+            onClick={() => setShowSyncModal(true)}
+            className="rounded-lg border border-[#02A9FF]/40 bg-[#02A9FF]/10 hover:bg-[#02A9FF]/20 px-2 sm:px-2.5 py-1 sm:py-1.5 text-[11px] sm:text-xs font-mono font-semibold text-[#02A9FF] transition flex items-center gap-1.5"
+          >
+            <span className="w-2 h-2 rounded-full bg-[#02A9FF]" />
+            <span>{syncedUser ? syncedUser.name : 'Sync AniList'}</span>
+          </button>
+
+          {/* 18+ Age & Parental Safety Badge */}
+          <button
+            type="button"
+            onClick={() => {
+              setAgeGateError('');
+              setShowAgeModal(true);
+            }}
+            title="Configure 18+ Age Verification & Safe Mode"
+            className={`rounded-lg border px-2 sm:px-2.5 py-1 sm:py-1.5 text-[11px] sm:text-xs font-mono font-semibold transition ${
+              ageState.isMinorLock
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : ageState.verifiedAdult && !ageState.safeModeEnabled
+                ? 'border-rose-500/50 bg-rose-500/15 text-rose-300'
+                : 'border-white/15 bg-white/5 text-[#94A3B8] hover:text-white'
+            }`}
+          >
+            {ageState.isMinorLock
+              ? 'Safe Mode (<18)'
+              : ageState.verifiedAdult && !ageState.safeModeEnabled
+              ? '18+ Verified'
+              : '18+ Safe Mode'}
+          </button>
+
+          {!isPremium ? (
+            <button
+              type="button"
+              onClick={() => setShowUpgradeModal(true)}
+              className="hidden lg:inline-flex rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-400/20 transition"
+            >
+              ✦ Simulcast Pass
+            </button>
+          ) : (
+            <span className="hidden lg:inline-block text-xs font-mono text-amber-400">
+              ✦ PASS
+            </span>
+          )}
+
           {userSession ? (
             <button
-              className="rounded-lg border border-white/15 bg-white/[0.05] px-3.5 py-2 text-xs font-semibold text-white hover:bg-white/10 transition-colors whitespace-nowrap shrink-0"
-              onClick={() => {
-                setUserSession(null)
-                setAgeConfirmed(false)
-                setStatusBanner('You have signed out of Kitsune+.')
-              }}
               type="button"
+              onClick={() => setUserSession(null)}
+              className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10 transition"
             >
-              Sign out ({userSession.email.split('@')[0]})
+              Sign out
             </button>
           ) : (
             <button
-              className="rounded-lg bg-[#ff5c8a] px-4 py-2 text-xs font-semibold text-white hover:bg-[#ff739b] transition-colors whitespace-nowrap shrink-0"
-              onClick={() => {
-                setAuthMessage({ type: '', text: '' })
-                setAuthModalOpen(true)
-              }}
               type="button"
+              onClick={() => setShowAuthModal(true)}
+              className="rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] px-3 py-1 text-xs font-semibold text-white transition"
             >
-              Sign in
+              Sign In
             </button>
           )}
         </div>
       </header>
 
-      {/* Notification Banner */}
-      {statusBanner && (
-        <div
-          className="flex items-center justify-between gap-4 border-b border-[#f6c453]/30 bg-[#241b12] px-6 py-2.5 text-xs text-[#fde68a]"
-          role="status"
-        >
-          <span>{statusBanner}</span>
-          <button
-            aria-label="Dismiss notification"
-            className="text-sm font-bold text-[#fde68a] hover:text-white"
-            onClick={() => setStatusBanner('')}
-            type="button"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {/* Main Content */}
+      <main className="flex-1">
+        {/* Spotlight Featured Hero (Featured Title with Direct HD Stream or Trailer) */}
+        {activeNav === 'discovery' && searchQuery.trim().length === 0 && (
+          <section className="relative overflow-hidden border-b border-white/10 bg-[#110F18]">
+            <div
+              className="pointer-events-none absolute inset-0 opacity-35"
+              style={{
+                background:
+                  'radial-gradient(circle at 78% 25%, rgba(244, 63, 94, 0.38), transparent 50%), radial-gradient(circle at 20% 80%, rgba(129, 140, 248, 0.25), transparent 55%)'
+              }}
+            />
 
-      <main className="flex-1" id="top">
-        {/* Featured Hero Spotlight Section (shown on Home view) */}
-        {activeNav === 'home' && currentHero && (
-          <section className="relative overflow-hidden border-b border-white/10 bg-gradient-to-br from-[#23113b] via-[#120d24] to-[#0b0914]">
-            <div className="mx-auto max-w-7xl px-6 py-10 lg:py-14">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
-                {/* Left Column: Editorial Spotlight Details */}
-                <div className="lg:col-span-7 space-y-5">
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#f6c453]">
-                    <span>Featured Series Spotlight</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-[#a79fc4]">{currentHero.studio}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums text-[#a79fc4]">
-                      {currentHero.year}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums text-[#f6c453]">
-                      ★ {currentHero.score}
-                    </span>
-                  </div>
-
-                  <h1
-                    className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.06]"
-                    style={{ textWrap: 'balance' }}
-                  >
-                    {currentHero.title}
-                  </h1>
-
-                  <p className="max-w-2xl text-base leading-relaxed text-[#cfc8e8]">
-                    {currentHero.synopsis}
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-[#a79fc4]">
-                    <span>{currentHero.genre}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>
-                      {Array.isArray(currentHero.episodes)
-                        ? `${currentHero.episodes.length} Full Episodes Available`
-                        : `${currentHero.episodeCount || 24} Episodes`}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span>Japanese Sub &amp; English Dub</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{userPlan === 'pm' ? 'Premium 4K Active' : 'Free Plan Supported'}</span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3.5 pt-2">
-                    <button
-                      className="rounded-xl bg-[#ff5c8a] px-6 py-3 text-sm font-bold text-white shadow-lg shadow-[#ff5c8a]/25 hover:bg-[#ff739b] transition-colors whitespace-nowrap shrink-0"
-                      onClick={() => handlePlayAnime(currentHero, 0)}
-                      type="button"
-                    >
-                      ▶ Watch Episode 1 Free
-                    </button>
-
-                    <button
-                      className="rounded-xl border border-white/15 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white hover:bg-white/12 transition-colors whitespace-nowrap shrink-0"
-                      onClick={() => handleToggleWatchlist(currentHero.id)}
-                      type="button"
-                    >
-                      {watchlistIds.includes(currentHero.id) ? '✓ In My List' : '+ Add to My List'}
-                    </button>
-
-                    {/* Spotlight Carousel Switchers */}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      {heroSpotlights.map((item, idx) => (
-                        <button
-                          aria-label={`Spotlight ${idx + 1}: ${item.title}`}
-                          className={`h-2.5 rounded-full transition-all ${
-                            idx === heroIndex % heroSpotlights.length
-                              ? 'w-7 bg-[#f6c453]'
-                              : 'w-2.5 bg-white/25 hover:bg-white/50'
-                          }`}
-                          key={item.id}
-                          onClick={() => setHeroIndex(idx)}
-                          type="button"
-                        />
-                      ))}
-                    </div>
-                  </div>
+            <div className="relative mx-auto max-w-[1440px] px-4 sm:px-8 py-8 sm:py-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+              <div className="lg:col-span-7 space-y-4">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-[#94A3B8]">
+                  <span className="text-[#F43F5E] font-semibold uppercase tracking-wider">
+                    AniList Trending Spotlight
+                  </span>
+                  <span>·</span>
+                  <span>{heroAnime.studio}</span>
+                  <span>·</span>
+                  <span>{heroAnime.format}</span>
+                  <span>·</span>
+                  <span className="text-emerald-400 font-semibold">
+                    {heroAnime.availability_type === 'direct-hd'
+                      ? 'Direct HD Stream · Sub & Dub'
+                      : 'Verified Official Preview'}
+                  </span>
+                  <span>·</span>
+                  <span className="text-amber-400">★ {heroAnime.score}</span>
                 </div>
 
-                {/* Right Column: Uncropped Key Visual Poster + Quick Episode Selector */}
-                <div className="lg:col-span-5 flex justify-center lg:justify-end">
-                  <div className="flex flex-col sm:flex-row items-stretch w-full max-w-lg overflow-hidden rounded-2xl border border-white/15 bg-[#151125] shadow-2xl">
-                    <div className="w-full sm:w-44 shrink-0 overflow-hidden border-b sm:border-b-0 sm:border-r border-white/10">
-                      <AnimeArtwork
-                        anime={currentHero}
-                        aspectClass="aspect-[3/4] w-full h-full"
-                        priority
-                      />
-                    </div>
-                    <div className="flex flex-1 min-w-0 flex-col justify-between p-4 sm:p-5 space-y-4">
-                      <div>
-                        <p className="text-[11px] font-medium text-[#f6c453]">
-                          Instant Screening Room
-                        </p>
-                        <h2 className="font-display text-base font-bold text-white mt-0.5 line-clamp-1">
-                          {currentHero.title}
-                        </h2>
-                        <p className="text-xs text-[#a79fc4] mt-1">
-                          Select an episode to launch immediately:
-                        </p>
-
-                        <div className="mt-3 space-y-1.5">
-                          {(Array.isArray(currentHero.episodes)
-                            ? currentHero.episodes.slice(0, 3)
-                            : [
-                                { episode_number: 1, name: 'Series Premiere', duration: '24:00' },
-                                { episode_number: 2, name: 'Episode 2', duration: '24:00' },
-                                { episode_number: 3, name: 'Episode 3', duration: '24:00' },
-                              ]
-                          ).map((ep, idx) => (
-                            <button
-                              className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-xs text-[#f5f1ff] hover:border-[#ff5c8a]/60 hover:bg-white/[0.07] transition-colors"
-                              key={ep.episode_number || idx}
-                              onClick={() => handlePlayAnime(currentHero, idx)}
-                              type="button"
-                            >
-                              <span className="truncate font-medium">
-                                Ep {ep.episode_number}: {ep.name}
-                              </span>
-                              <span className="font-mono text-[11px] tabular-nums text-[#f6c453] shrink-0">
-                                ▶
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <button
-                        className="w-full rounded-lg bg-[#f6c453] px-3.5 py-2 text-xs font-bold text-[#241800] hover:brightness-105 transition whitespace-nowrap"
-                        onClick={() => handlePlayAnime(currentHero, 0)}
-                        type="button"
-                      >
-                        Open Full Episode List
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* Workspace Search & Genre Filter Toolbar */}
-        {(activeNav === 'home' || activeNav === 'browse') && (
-          <section
-            aria-label="Search and filter anime catalog"
-            className="border-b border-white/10 bg-[#110d1f]"
-          >
-            <div className="mx-auto max-w-7xl px-6 py-4 space-y-3.5">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                {/* Search Input */}
-                <div className="relative flex-1 max-w-md">
-                  <input
-                    aria-label="Search anime"
-                    className="w-full rounded-xl border border-white/15 bg-[#19142b] px-4 py-2.5 text-sm text-white placeholder:text-[#a79fc4]/70 focus:border-[#ff5c8a] focus:outline-none"
-                    id="q"
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search anime, studio, or genre..."
-                    type="search"
-                    value={searchQuery}
-                  />
-                  {searchQuery && (
-                    <button
-                      aria-label="Clear search query"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#a79fc4] hover:text-white"
-                      onClick={() => setSearchQuery('')}
-                      type="button"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-
-                {/* Audio, Free-Series, and Sort Controls */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center rounded-lg bg-white/[0.04] p-1 border border-white/10">
-                    {[
-                      { id: 'all', label: 'All Audio' },
-                      { id: 'sub', label: 'Subtitled' },
-                      { id: 'dub', label: 'English Dub' },
-                    ].map((opt) => (
-                      <button
-                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                          audioFilter === opt.id
-                            ? 'bg-white text-[#120d24]'
-                            : 'text-[#a79fc4] hover:text-white'
-                        }`}
-                        key={opt.id}
-                        onClick={() => setAudioFilter(opt.id)}
-                        type="button"
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    aria-pressed={onlyFree}
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                      onlyFree
-                        ? 'border-[#f6c453] bg-[#f6c453]/15 text-[#f6c453]'
-                        : 'border-white/10 bg-white/[0.04] text-[#a79fc4] hover:text-white'
-                    }`}
-                    onClick={() => setOnlyFree((prev) => !prev)}
-                    type="button"
-                  >
-                    Free Full Series Only
-                  </button>
-
-                  <select
-                    aria-label="Sort anime by"
-                    className="rounded-lg border border-white/10 bg-[#19142b] px-3 py-1.5 text-xs text-white focus:border-[#ff5c8a] focus:outline-none"
-                    onChange={(e) => setSortBy(e.target.value)}
-                    value={sortBy}
-                  >
-                    <option value="popular">Sort: Most Popular</option>
-                    <option value="score">Sort: Highest Rated</option>
-                    <option value="newest">Sort: Newest Releases</option>
-                    <option value="title">Sort: Title (A–Z)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Interactive Genre Filter Buttons */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                {GENRE_LIST.map((genre) => {
-                  const active = selectedGenre === genre
-                  return (
-                    <button
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                        active
-                          ? 'bg-[#f5f1ff] text-[#120d24] font-semibold'
-                          : 'bg-white/[0.04] text-[#a79fc4] hover:bg-white/[0.08] hover:text-white'
-                      }`}
-                      key={genre}
-                      onClick={() => setSelectedGenre(genre)}
-                      type="button"
-                    >
-                      {genre}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* VIEW 1: HOME OR BROWSE */}
-        {(activeNav === 'home' || activeNav === 'browse') && (
-          <div className="mx-auto max-w-7xl px-6 py-10 space-y-12">
-            {isFiltering || activeNav === 'browse' ? (
-              <section aria-labelledby="filtered-results-heading">
-                <div className="flex items-baseline justify-between gap-4 mb-6">
-                  <div>
-                    <h2
-                      className="font-display text-2xl font-bold text-white"
-                      id="filtered-results-heading"
-                    >
-                      {searchQuery
-                        ? `Search Results for “${searchQuery}”`
-                        : selectedGenre !== 'All'
-                          ? `${selectedGenre} Anime`
-                          : 'Complete Anime Catalog'}
-                    </h2>
-                    <p className="text-xs text-[#a79fc4] mt-1 font-mono tabular-nums">
-                      Showing {filteredCatalog.length} titles
-                      {isSearchingApi ? ' · Syncing live MyAnimeList catalog…' : ''}
-                    </p>
-                  </div>
-
-                  {isFiltering && (
-                    <button
-                      className="text-xs font-medium text-[#f6c453] hover:underline whitespace-nowrap"
-                      onClick={() => {
-                        setSearchQuery('')
-                        setSelectedGenre('All')
-                        setAudioFilter('all')
-                        setOnlyFree(false)
-                      }}
-                      type="button"
-                    >
-                      Reset Filters
-                    </button>
-                  )}
-                </div>
-
-                {filteredCatalog.length === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-[#141122] p-12 text-center">
-                    <p className="font-display text-lg font-semibold text-white">
-                      No anime titles matched your current filter
-                    </p>
-                    <p className="mt-1 text-xs text-[#a79fc4]">
-                      Try clearing your search query or switching back to All genres.
-                    </p>
-                    <button
-                      className="mt-4 rounded-lg bg-[#ff5c8a] px-4 py-2 text-xs font-semibold text-white hover:bg-[#ff739b]"
-                      onClick={() => {
-                        setSearchQuery('')
-                        setSelectedGenre('All')
-                        setAudioFilter('all')
-                        setOnlyFree(false)
-                      }}
-                      type="button"
-                    >
-                      Show All Anime
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                    {filteredCatalog.map((anime) => (
-                      <AnimeCard
-                        anime={anime}
-                        isInWatchlist={watchlistIds.includes(anime.id)}
-                        key={anime.id}
-                        onPlay={handlePlayAnime}
-                        onToggleWatchlist={handleToggleWatchlist}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            ) : (
-              <>
-                {/* Continue Watching Rail */}
-                {continueWatchingItems.length > 0 && (
-                  <section aria-labelledby="continue-watching-heading">
-                    <div className="flex items-baseline justify-between mb-4">
-                      <div>
-                        <h2
-                          className="font-display text-xl font-bold text-white"
-                          id="continue-watching-heading"
-                        >
-                          Continue Watching
-                        </h2>
-                        <p className="text-xs text-[#a79fc4]">
-                          Pick up right where you left off in your screening room
-                        </p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                      {continueWatchingItems.slice(0, 6).map(({ anime, entry }) => (
-                        <AnimeCard
-                          anime={anime}
-                          isInWatchlist={watchlistIds.includes(anime.id)}
-                          key={`cw-${anime.id}`}
-                          onPlay={(a) => handlePlayAnime(a, (entry.episodeNumber || 1) - 1)}
-                          onToggleWatchlist={handleToggleWatchlist}
-                          watchEntry={entry}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Free Full Series Rail (All 11 Official Playlists with Rich Artwork) */}
-                <section aria-labelledby="free-series-heading">
-                  <div className="flex items-baseline justify-between mb-4">
-                    <div>
-                      <h2
-                        className="font-display text-xl font-bold text-white"
-                        id="free-series-heading"
-                      >
-                        Free Full Series
-                      </h2>
-                      <p className="text-xs text-[#a79fc4]">
-                        Complete multi-episode anime series from official free channels &amp; Kitsune+ Theater
-                      </p>
-                    </div>
-                    <button
-                      className="text-xs font-medium text-[#f6c453] hover:underline whitespace-nowrap"
-                      onClick={() => {
-                        setOnlyFree(true)
-                        setActiveNav('browse')
-                      }}
-                      type="button"
-                    >
-                      View all {filteredFreeSeries.length} free series →
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                    {filteredFreeSeries.slice(0, 12).map((anime) => (
-                      <AnimeCard
-                        anime={anime}
-                        isInWatchlist={watchlistIds.includes(anime.id)}
-                        key={anime.id}
-                        onPlay={handlePlayAnime}
-                        onToggleWatchlist={handleToggleWatchlist}
-                      />
-                    ))}
-                  </div>
-                </section>
-
-                {/* Airing Now & Top Simulcasts */}
-                <section aria-labelledby="airing-now-heading">
-                  <div className="flex items-baseline justify-between mb-4">
-                    <div>
-                      <h2
-                        className="font-display text-xl font-bold text-white"
-                        id="airing-now-heading"
-                      >
-                        Airing Now &amp; Top Simulcasts
-                      </h2>
-                      <p className="text-xs text-[#a79fc4]">
-                        Current season standouts and highest-rated new broadcasts
-                      </p>
-                    </div>
-                    <button
-                      className="text-xs font-medium text-[#f6c453] hover:underline whitespace-nowrap"
-                      onClick={() => setActiveNav('simulcast')}
-                      type="button"
-                    >
-                      Weekly Simulcast Schedule →
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                    {airingList.slice(0, 6).map((anime) => (
-                      <AnimeCard
-                        anime={anime}
-                        isInWatchlist={watchlistIds.includes(anime.id)}
-                        key={anime.id}
-                        onPlay={handlePlayAnime}
-                        onToggleWatchlist={handleToggleWatchlist}
-                      />
-                    ))}
-                  </div>
-                </section>
-
-                {/* Most Popular All-Time */}
-                <section aria-labelledby="most-popular-heading">
-                  <div className="flex items-baseline justify-between mb-4">
-                    <div>
-                      <h2
-                        className="font-display text-xl font-bold text-white"
-                        id="most-popular-heading"
-                      >
-                        Most Popular Essentials
-                      </h2>
-                      <p className="text-xs text-[#a79fc4]">
-                        All-time acclaimed anime series and theatrical masterpieces
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                    {popularList.slice(0, 6).map((anime) => (
-                      <AnimeCard
-                        anime={anime}
-                        isInWatchlist={watchlistIds.includes(anime.id)}
-                        key={anime.id}
-                        onPlay={handlePlayAnime}
-                        onToggleWatchlist={handleToggleWatchlist}
-                      />
-                    ))}
-                  </div>
-                </section>
-
-                {/* Mature (18+) Row */}
-                <section aria-labelledby="mature-row-heading">
-                  <div className="flex items-baseline justify-between mb-4">
-                    <div>
-                      <h2
-                        className="font-display text-xl font-bold text-white"
-                        id="mature-row-heading"
-                      >
-                        Mature Darker Fantasies &amp; Seinen (18+)
-                      </h2>
-                      <p className="text-xs text-[#a79fc4]">
-                        Uncut dark fantasy, psychological thrillers, and cyberpunk action · Age confirmation required
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                    {matureList.slice(0, 6).map((anime) => (
-                      <AnimeCard
-                        anime={anime}
-                        isInWatchlist={watchlistIds.includes(anime.id)}
-                        key={anime.id}
-                        onPlay={handlePlayAnime}
-                        onToggleWatchlist={handleToggleWatchlist}
-                      />
-                    ))}
-                  </div>
-                </section>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* VIEW 2: SIMULCAST WEEKLY CALENDAR */}
-        {activeNav === 'simulcast' && (
-          <section className="mx-auto max-w-7xl px-6 py-10 space-y-8">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-white/10 pb-6">
-              <div>
-                <p className="text-xs font-medium text-[#f6c453]">Weekly Broadcast Calendar</p>
-                <h1 className="font-display text-3xl font-extrabold text-white mt-1">
-                  Simulcast Release Schedule
+                <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-[1.08]">
+                  {heroAnime.title}
                 </h1>
-                <p className="text-sm text-[#a79fc4] mt-1">
-                  New episodes stream one hour after Japanese broadcast. Premium members receive immediate early access.
+
+                <p className="text-sm sm:text-base text-[#94A3B8] max-w-[62ch] leading-relaxed line-clamp-3">
+                  {heroAnime.synopsis}
                 </p>
-              </div>
-            </div>
 
-            {/* Day Tabs */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-2">
-              {SIMULCAST_SCHEDULE.map((entry) => {
-                const active = selectedDay === entry.day
-                return (
+                <div className="flex flex-wrap items-center gap-3 pt-2">
                   <button
-                    className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                      active
-                        ? 'bg-[#ff5c8a] text-white'
-                        : 'border border-white/10 bg-[#141122] text-[#a79fc4] hover:text-white'
-                    }`}
-                    key={entry.day}
-                    onClick={() => setSelectedDay(entry.day)}
                     type="button"
+                    onClick={() => handleOpenAnime(heroAnime, 1, 1)}
+                    className="rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-[#F43F5E]/25 transition flex items-center gap-2"
                   >
-                    {entry.day}
+                    <span>▶ Watch Now / Screening Room</span>
                   </button>
-                )
-              })}
-            </div>
 
-            {/* Day Schedule List */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(
-                SIMULCAST_SCHEDULE.find((d) => d.day === selectedDay)?.releases || []
-              ).map((rel, i) => {
-                const matchedAnime =
-                  allAnimeCatalog.find((a) => String(a.id) === String(rel.animeId)) ||
-                  freeSeriesList[0]
-                return (
-                  <div
-                    className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#141122] p-5 hover:border-white/25 transition-colors"
-                    key={`${rel.animeId}-${i}`}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDetailModal(heroAnime)}
+                    className="rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition"
                   >
-                    <div className="space-y-1 min-w-0">
-                      <span className="font-mono text-xs font-semibold tabular-nums text-[#f6c453]">
-                        {rel.time}
-                      </span>
-                      <h3 className="font-display text-base font-bold text-white truncate">
-                        {rel.title}
-                      </h3>
-                      <p className="text-xs text-[#cfc8e8] truncate">{rel.episode}</p>
-                      <p className="text-[11px] text-[#a79fc4]">
-                        {rel.studio} · {rel.audio}
+                    Details & Cast Information
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Key Visual Poster Card */}
+              <div className="lg:col-span-5 flex justify-center lg:justify-end">
+                <div
+                  onClick={() => handleOpenDetailModal(heroAnime)}
+                  className="group cursor-pointer relative w-full max-w-md rounded-xl border border-white/15 bg-[#13121A] overflow-hidden shadow-2xl flex items-stretch h-56 sm:h-64"
+                >
+                  <div className="w-40 sm:w-44 shrink-0 h-full overflow-hidden relative bg-[#1A1823]">
+                    <AnimeArtwork
+                      src={heroAnime.poster_url}
+                      title={heroAnime.title}
+                      japaneseTitle={heroAnime.japanese_title}
+                      studio={heroAnime.studio}
+                      accentColor={heroAnime.banner_color}
+                      className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                    />
+                  </div>
+                  <div className="p-4 sm:p-5 flex flex-col justify-between flex-1 min-w-0">
+                    <div>
+                      <div className="text-[11px] font-mono uppercase tracking-wider text-[#38BDF8]">
+                        AniList Verified Entry #{heroAnime.anilist_id || heroAnime.id}
+                      </div>
+                      <h2 className="text-base sm:text-lg font-bold text-white mt-1 line-clamp-2">
+                        {heroAnime.title}
+                      </h2>
+                      <p className="text-xs text-[#94A3B8] mt-1 font-mono truncate">
+                        {heroAnime.japanese_title || heroAnime.romaji_title}
                       </p>
                     </div>
-                    <button
-                      className="rounded-xl bg-[#ff5c8a] px-4 py-2 text-xs font-semibold text-white hover:bg-[#ff739b] transition-colors whitespace-nowrap shrink-0"
-                      onClick={() => handlePlayAnime(matchedAnime, 0)}
-                      type="button"
-                    >
-                      Watch Screening
-                    </button>
+
+                    <div className="space-y-2">
+                      <div className="text-xs text-[#94A3B8] font-mono">
+                        {heroAnime.genres?.slice(0, 3).join(' · ')}
+                      </div>
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#F43F5E] group-hover:translate-x-1 transition">
+                        View Complete Details →
+                      </span>
+                    </div>
                   </div>
-                )
-              })}
+                </div>
+              </div>
             </div>
           </section>
         )}
 
-        {/* VIEW 3: MY WATCHLIST ("MY LIST") */}
-        {activeNav === 'watchlist' && (
-          <section className="mx-auto max-w-7xl px-6 py-10 space-y-8">
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-white/10 pb-6">
+        {/* Continue Watching Rail (Second-Accurate Persistent Resume) */}
+        {continueWatchingItems.length > 0 && (
+          <section className="mx-auto max-w-[1440px] px-4 sm:px-8 pt-8">
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <p className="text-xs font-medium text-[#f6c453]">Personal Library</p>
-                <h1 className="font-display text-3xl font-extrabold text-white mt-1">
-                  My Watchlist ({watchlistAnime.length})
-                </h1>
-                <p className="text-sm text-[#a79fc4] mt-1">
-                  Saved anime series and films synced to your browser and Kitsune+ account.
+                <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white">
+                  Continue Watching
+                </h2>
+                <p className="text-xs text-[#94A3B8]">
+                  Pick up at the exact second where you left off
                 </p>
               </div>
               <button
-                className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 whitespace-nowrap self-start sm:self-auto"
-                onClick={() => setActiveNav('browse')}
                 type="button"
+                onClick={() => {
+                  setWatchProgress({});
+                  localStorage.removeItem(STORAGE_KEYS.WATCH_PROGRESS);
+                }}
+                className="text-xs text-[#94A3B8] hover:text-white transition"
               >
-                + Explore More Titles
+                Clear history
               </button>
             </div>
 
-            {watchlistAnime.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-[#141122] p-12 text-center">
-                <p className="font-display text-lg font-semibold text-white">
-                  Your Watchlist is currently empty
-                </p>
-                <p className="mt-1 text-xs text-[#a79fc4]">
-                  Click the + button on any anime poster to save titles to your personal queue.
-                </p>
-                <button
-                  className="mt-5 rounded-xl bg-[#ff5c8a] px-5 py-2.5 text-xs font-semibold text-white hover:bg-[#ff739b]"
-                  onClick={() => setActiveNav('home')}
-                  type="button"
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {continueWatchingItems.slice(0, 4).map(({ anime, progress }, idx) => (
+                <div
+                  key={`continue-${anime.id}-${idx}`}
+                  onClick={() =>
+                    handleOpenAnime(
+                      anime,
+                      progress.seasonNumber || 1,
+                      progress.episodeNumber || 1
+                    )
+                  }
+                  className="cursor-pointer group rounded-xl border border-white/10 bg-[#13121A] hover:border-white/25 p-3 flex items-center gap-3.5 transition"
                 >
-                  Browse Popular Anime
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5">
-                {watchlistAnime.map((anime) => (
-                  <AnimeCard
-                    anime={anime}
-                    isInWatchlist
-                    key={anime.id}
-                    onPlay={handlePlayAnime}
-                    onToggleWatchlist={handleToggleWatchlist}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* MEMBERSHIP PLANS SECTION (Shown at bottom of Home and on Premium tab) */}
-        {(activeNav === 'home' || activeNav === 'premium') && (
-          <section
-            aria-labelledby="plans-heading"
-            className="border-t border-white/10 bg-[#100c1d] py-14"
-            id="premium"
-          >
-            <div className="mx-auto max-w-5xl px-6">
-              <div className="max-w-xl mb-8">
-                <p className="text-xs font-medium text-[#f6c453]">Kitsune+ Membership</p>
-                <h2
-                  className="font-display text-2xl sm:text-3xl font-extrabold text-white mt-1"
-                  id="plans-heading"
-                >
-                  Choose your streaming plan
-                </h2>
-                <p className="text-sm text-[#a79fc4] mt-1">
-                  Stream thousands of episodes free with official channel support, or upgrade to Premium for zero ads and 4K Ultra HD theater quality.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Free Tier Card */}
-                <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-[#161226] p-6">
-                  <div>
-                    <div className="flex items-baseline justify-between">
-                      <h3 className="font-display text-lg font-bold text-white">Free</h3>
-                      <span className="text-xs text-[#a79fc4]">
-                        {userPlan === 'free' ? 'Current Plan' : 'Standard Tier'}
-                      </span>
-                    </div>
-                    <p className="font-display text-3xl font-extrabold text-white mt-2 font-mono tabular-nums">
-                      $0
-                      <span className="text-xs font-normal text-[#a79fc4]"> / forever</span>
-                    </p>
-                    <ul className="mt-5 space-y-2.5 text-xs text-[#cfc8e8]">
-                      <li>· Full access to all 11 Free Full Series playlists</li>
-                      <li>· Live MyAnimeList &amp; Jikan catalog browsing and trailers</li>
-                      <li>· 1080p HD streaming in Kitsune+ Theater</li>
-                      <li>· Local watchlist &amp; episode progress tracking</li>
-                    </ul>
+                  <div className="w-14 h-20 rounded-lg overflow-hidden shrink-0 bg-[#1C1A26]">
+                    <AnimeArtwork
+                      src={anime.poster_url}
+                      title={anime.title}
+                      japaneseTitle={anime.japanese_title}
+                      studio={anime.studio}
+                      accentColor={anime.banner_color}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-
-                  <button
-                    className="mt-6 w-full rounded-xl border border-white/15 bg-white/[0.05] py-2.5 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
-                    onClick={() => setActiveNav('home')}
-                    type="button"
-                  >
-                    {userPlan === 'free' ? 'Continue with Free Plan' : 'Included in Membership'}
-                  </button>
-                </div>
-
-                {/* Premium Tier Card */}
-                <div className="flex flex-col justify-between rounded-2xl border border-[#f6c453]/60 bg-[#1b152e] p-6 shadow-xl">
-                  <div>
-                    <div className="flex items-baseline justify-between">
-                      <h3 className="font-display text-lg font-bold text-[#f6c453]">
-                        Kitsune+ Premium
-                      </h3>
-                      <span className="text-xs font-semibold text-[#f6c453]">
-                        {userPlan === 'pm' ? 'Active Membership' : 'Most Popular'}
-                      </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-mono text-[#F43F5E]">
+                      Resume S{progress.seasonNumber || 1}:E{progress.episodeNumber} ·{' '}
+                      {formatTimestamp(progress.resumeSeconds || 0)}
                     </div>
-                    <p className="font-display text-3xl font-extrabold text-white mt-2 font-mono tabular-nums">
-                      $7.99
-                      <span className="text-xs font-normal text-[#a79fc4]"> / month</span>
+                    <h3 className="text-sm font-bold text-white truncate mt-0.5">
+                      {anime.title}
+                    </h3>
+                    <p className="text-xs text-[#94A3B8] truncate">
+                      {progress.episodeTitle}
                     </p>
-                    <ul className="mt-5 space-y-2.5 text-xs text-[#f5f1ff]">
-                      <li>· No banner or pre-roll ads, ever</li>
-                      <li>· 4K Ultra HD bitrate &amp; dual-audio (JP Sub / EN Dub) selector</li>
-                      <li>· Early access to weekly simulcast episodes 1 hr after Japan</li>
-                      <li>· Cross-device cloud watchlist sync via Supabase</li>
-                    </ul>
+                    <div className="mt-2 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full bg-[#F43F5E] transition-all"
+                        style={{ width: `${progress.progressPercent}%` }}
+                      />
+                    </div>
                   </div>
-
-                  <button
-                    className="mt-6 w-full rounded-xl bg-[#f6c453] py-2.5 text-xs font-bold text-[#241800] hover:brightness-105 transition"
-                    id="gopm"
-                    onClick={handleUpgradePremium}
-                    type="button"
-                  >
-                    {userPlan === 'pm' ? '✓ You are a Premium Member' : 'Go Premium'}
-                  </button>
                 </div>
-              </div>
+              ))}
             </div>
           </section>
         )}
+
+        {/* Discovery Sections Tabs & Section Header */}
+        <section className="mx-auto max-w-[1440px] px-4 sm:px-8 pt-8 pb-3 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+            {/* Discovery Section Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto" role="tablist" aria-label="AniList discovery section">
+              {[
+                { id: 'trending', label: '🔥 Trending Now' },
+                { id: 'popular', label: '🌟 All-Time Popular' },
+                { id: 'topRated', label: '🏆 Top Rated' },
+                { id: 'airing', label: '📺 Currently Airing' },
+                { id: 'upcoming', label: '⏳ Most Anticipated' },
+                { id: 'seasonal', label: '🌸 Seasonal Anime' }
+              ].map((sec) => {
+                const active = discoverySection === sec.id && !searchQuery.trim();
+                return (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => {
+                      setDiscoverySection(sec.id);
+                      setSearchQuery('');
+                      setActiveNav('discovery');
+                    }}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                      active
+                        ? 'bg-white text-[#0B0A0E]'
+                        : 'text-[#94A3B8] hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    {sec.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="text-xs font-mono text-[#94A3B8]">
+              {isDiscoveryLoading || isSearching ? (
+                <span className="text-[#38BDF8] animate-pulse">Querying AniList GraphQL...</span>
+              ) : (
+                <span>Showing {displayedItems.length} titles</span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Dynamic Anime Grid / Poster Wall */}
+        <section className="mx-auto max-w-[1440px] px-4 sm:px-8 pb-16">
+          {displayedItems.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-[#13121A] p-12 text-center space-y-3">
+              <p className="text-base font-semibold text-white">
+                {isSearching ? 'Searching AniList database...' : 'No titles found matching your criteria.'}
+              </p>
+              <p className="text-xs text-[#94A3B8]">
+                Try adjusting your search keywords, clearing genre filters, or checking your adult content settings.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedGenre('All');
+                  setSelectedFormat('All');
+                  setSelectedSeason('All');
+                  setSelectedYear('All');
+                  setActiveNav('discovery');
+                }}
+                className="rounded-lg bg-[#F43F5E] px-4 py-2 text-xs font-semibold text-white"
+              >
+                Reset Search & Discovery
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-5">
+              {displayedItems.map((anime, idx) => {
+                const progress = watchProgress[String(anime.id)];
+                const availability = getAvailabilityStatus(anime);
+
+                return (
+                  <article
+                    key={`anime-card-${anime.id}-${idx}`}
+                    onClick={() => handleOpenDetailModal(anime)}
+                    className="group cursor-pointer flex flex-col"
+                  >
+                    {/* 3:4 Vertical Poster Container */}
+                    <div className="relative aspect-[3/4] w-full rounded-xl overflow-hidden bg-[#13121A] border border-white/10 group-hover:border-white/30 transition shadow-lg">
+                      <AnimeArtwork
+                        src={anime.poster_url}
+                        title={anime.title}
+                        japaneseTitle={anime.japanese_title}
+                        studio={anime.studio}
+                        accentColor={anime.banner_color}
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                      />
+
+                      {/* Subtle Bottom Gradient Scrim */}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
+
+                      {/* Top Badges */}
+                      <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between text-[10px] font-mono">
+                        <span
+                          className={`px-1.5 py-0.5 rounded font-semibold backdrop-blur-md ${
+                            availability.watchableInApp
+                              ? 'bg-emerald-950/90 border border-emerald-400/40 text-emerald-300'
+                              : isMatureAnime(anime)
+                              ? 'bg-rose-950/90 border border-rose-500/40 text-rose-300'
+                              : 'bg-black/80 border border-white/15 text-[#94A3B8]'
+                          }`}
+                        >
+                          {availability.watchableInApp
+                            ? (isMatureAnime(anime) ? '18+ DIRECT HD' : 'DIRECT HD')
+                            : (isMatureAnime(anime) ? '18+ PARTNER' : 'PARTNER PREVIEW')}
+                        </span>
+                        <span className="bg-black/80 backdrop-blur-md px-1.5 py-0.5 rounded text-amber-400 font-semibold border border-white/10">
+                          ★ {anime.score}
+                        </span>
+                      </div>
+
+                      {/* Bottom Resume Progress Bar if watched */}
+                      {progress && (
+                        <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20">
+                          <div
+                            className="h-full bg-[#F43F5E]"
+                            style={{ width: `${progress.progressPercent}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Data Points below poster */}
+                    <h3 className="mt-2 text-xs sm:text-sm font-bold text-white group-hover:text-[#F43F5E] transition line-clamp-1">
+                      {anime.title}
+                    </h3>
+                    <div className="mt-0.5 text-[11px] text-[#94A3B8] font-mono truncate">
+                      {anime.format || 'TV'} · {anime.genres?.slice(0, 2).join(' / ') || 'Anime'} ·{' '}
+                      {anime.year}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </main>
 
-      {/* Quiet Footer */}
-      <footer className="border-t border-white/10 bg-[#08060f] px-6 py-8 text-xs text-[#a79fc4]">
-        <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <p className="max-w-3xl leading-relaxed">
-            Kitsune+ Anime Streaming. Catalog metadata powered by MyAnimeList via the Jikan API. Trailers and free full-series episodes stream from official YouTube channels (Muse Asia, Ani-One) and Kitsune+ Theater.
-          </p>
-          <div className="flex items-center gap-5 shrink-0">
-            <a className="text-[#f6c453] hover:underline" href="/privacy.html">
+      {/* Footer */}
+      <footer className="border-t border-white/10 bg-[#0B0A0E] py-8 px-4 sm:px-8 text-xs text-[#94A3B8]">
+        <div className="mx-auto max-w-[1440px] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <span>Kitsune</span>
+              <span className="text-[#F43F5E]">+</span>
+              <span>Anime Discovery & Streaming Engine</span>
+            </div>
+            <p>
+              Metadata and catalog discovery dynamically powered by the official AniList GraphQL API (<a href="https://graphql.anilist.co" target="_blank" rel="noopener noreferrer" className="text-[#38BDF8] hover:underline">graphql.anilist.co</a>). Verified video streams and legal distributor links.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setShowSyncModal(true)}
+              className="text-[#02A9FF] hover:underline font-mono"
+            >
+              AniList Library Sync
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAgeModal(true)}
+              className="hover:text-white transition"
+            >
+              18+ Age & Safety Settings
+            </button>
+            <a href="/privacy.html" className="hover:text-white transition">
               Privacy Policy
             </a>
-            <button
-              className="hover:text-white transition-colors"
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-              type="button"
-            >
-              Back to top ↑
-            </button>
           </div>
         </div>
       </footer>
 
-      {/* 18+ Mature Content Age Verification Modal */}
-      {pendingMatureItem && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPendingMatureItem(null)
+      {/* Dedicated Anime Detail Modal */}
+      {selectedDetailAnime && (
+        <AnimeDetailModal
+          anime={selectedDetailAnime}
+          curatedDirectMatches={curatedDirectMatches}
+          userLists={userLists}
+          onUpdateUserListStatus={handleUpdateUserListStatus}
+          onOpenScreeningRoom={(anime, season, ep) => handleOpenAnime(anime, season, ep)}
+          onSelectRelatedAnime={async (relatedId) => {
+            try {
+              const res = await queryAniList(ANILIST_MEDIA_DETAIL_QUERY, { id: relatedId });
+              if (res?.Media) {
+                const mapped = mapAniListMediaToAnime(res.Media, curatedDirectMatches);
+                setSelectedDetailAnime(mapped);
+              }
+            } catch {
+              // ignore
+            }
           }}
+          onClose={() => setSelectedDetailAnime(null)}
+          isAdultAllowed={isAdultAllowed}
+        />
+      )}
+
+      {/* Active Screening Room Video Player Modal */}
+      {activeScreening && (
+        <ScreeningModal
+          anime={activeScreening.anime}
+          initialSeasonNumber={activeScreening.seasonNumber}
+          initialEpisodeNumber={activeScreening.episodeNumber}
+          savedProgress={watchProgress[String(activeScreening.anime.id)]}
+          onClose={() => setActiveScreening(null)}
+          onSelectEpisode={({
+            seasonNumber,
+            episodeNumber,
+            episodeTitle,
+            resumeSeconds,
+            durationSeconds
+          }) => {
+            const seasons = getAnimeSeasons(activeScreening.anime);
+            const sObj =
+              seasons.find((s) => s.season_number === Number(seasonNumber)) ||
+              seasons[0];
+            setWatchProgress((prev) =>
+              updateWatchProgress(prev, {
+                animeId: activeScreening.anime.id,
+                seasonNumber,
+                episodeNumber,
+                totalEpisodes:
+                  sObj?.episodes?.length || activeScreening.anime.episodes || 12,
+                episodeTitle,
+                resumeSeconds,
+                durationSeconds
+              })
+            );
+          }}
+          isInWatchlist={userLists.watching?.includes(String(activeScreening.anime.id))}
+          onToggleWatchlist={(animeId) => {
+            handleUpdateUserListStatus(
+              animeId,
+              userLists.watching?.includes(String(animeId)) ? 'none' : 'watching'
+            );
+          }}
+        />
+      )}
+
+      {/* AniList Profile Sync Modal */}
+      {showSyncModal && (
+        <AniListSyncModal
+          onClose={() => setShowSyncModal(false)}
+          onImportUserLists={handleImportAniListLists}
+          currentSyncedUser={syncedUser}
+          onDisconnect={handleDisconnectAniList}
+        />
+      )}
+
+      {/* Strict 18+ Date-of-Birth Age Verification & Parental Safe Mode Modal */}
+      {showAgeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="age-gate-title"
         >
-          <div
-            aria-labelledby="age-gate-title"
-            aria-modal="true"
-            className="w-full max-w-md rounded-2xl border border-white/15 bg-[#19142b] p-6 text-center shadow-2xl"
-            role="dialog"
-          >
-            <p className="text-xs font-semibold text-[#ff5c8a]">Viewer Discretion Advised</p>
-            <h2 className="font-display text-xl font-bold text-white mt-1" id="age-gate-title">
-              Mature Content (18+)
-            </h2>
-            <p className="mt-2 text-xs leading-relaxed text-[#a79fc4]">
-              “{pendingMatureItem.anime.title}” contains intense violence and mature themes intended for viewers 18 and older. Confirm your age to continue to the screening room.
-            </p>
-            <div className="mt-6 flex items-center justify-center gap-3">
+          <div className="w-full max-w-md rounded-xl border border-white/15 bg-[#13121A] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono uppercase tracking-wider text-[#F43F5E]">
+                AniList 18+ Age & Compliance Gate
+              </span>
               <button
-                className="rounded-xl bg-[#ff5c8a] px-5 py-2.5 text-xs font-bold text-white hover:bg-[#ff739b] transition-colors"
-                id="yes"
-                onClick={handleConfirmAge}
                 type="button"
+                onClick={() => {
+                  setShowAgeModal(false);
+                  setPendingMatureSelect(null);
+                }}
+                className="text-xs text-[#94A3B8] hover:text-white"
               >
-                I am 18 or older
+                Close ✕
               </button>
-              <button
-                className="rounded-xl border border-white/15 bg-white/[0.05] px-5 py-2.5 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
-                id="no"
-                onClick={() => setPendingMatureItem(null)}
-                type="button"
+            </div>
+
+            <h2 id="age-gate-title" className="text-xl font-bold text-white">
+              {ageState.isMinorLock
+                ? 'Minor Protection Active (<18 Locked)'
+                : 'Verify Your Date of Birth (18+)'}
+            </h2>
+
+            <p className="text-xs sm:text-sm text-[#94A3B8] leading-relaxed">
+              AniList classifies certain seinen and mature titles under `isAdult: true`. In accordance with regional broadcasting regulations, enter your birth date to verify age eligibility.
+            </p>
+
+            {ageGateError && (
+              <div
+                data-testid="age-gate-error"
+                className="rounded-lg border border-rose-500/40 bg-rose-500/15 p-3 text-xs text-rose-200 font-medium"
               >
-                Go back
+                {ageGateError}
+              </div>
+            )}
+
+            {ageState.isMinorLock ? (
+              <div className="space-y-3 pt-2">
+                <p className="text-xs text-emerald-300 font-mono">
+                  Safe Mode is locked on for this session to protect minors from adult categories.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAgeModal(false);
+                    setPendingMatureSelect(null);
+                  }}
+                  className="w-full rounded-lg bg-white/10 hover:bg-white/15 px-4 py-2.5 text-xs font-semibold text-white"
+                >
+                  Return to All-Ages Catalog
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleVerifyAgeSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-mono text-[#94A3B8] mb-1">
+                    Regional Legal Threshold
+                  </label>
+                  <select
+                    aria-label="Regional age threshold"
+                    value={regionMinAge}
+                    onChange={(e) => setRegionMinAge(Number(e.target.value))}
+                    className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3 py-2 text-xs text-white"
+                  >
+                    <option value={18}>Standard International (18+ Years Required)</option>
+                    <option value={20}>Strict Regional Standard (20+ Years Required)</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#94A3B8] mb-1">
+                      Birth Year
+                    </label>
+                    <input
+                      type="number"
+                      aria-label="Birth Year"
+                      value={dobYear}
+                      onChange={(e) => setDobYear(e.target.value)}
+                      min="1920"
+                      max="2026"
+                      required
+                      className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3 py-2 text-sm text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#94A3B8] mb-1">
+                      Month (1-12)
+                    </label>
+                    <input
+                      type="number"
+                      aria-label="Birth Month"
+                      value={dobMonth}
+                      onChange={(e) => setDobMonth(e.target.value)}
+                      min="1"
+                      max="12"
+                      required
+                      className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3 py-2 text-sm text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono text-[#94A3B8] mb-1">
+                      Day (1-31)
+                    </label>
+                    <input
+                      type="number"
+                      aria-label="Birth Day"
+                      value={dobDay}
+                      onChange={(e) => setDobDay(e.target.value)}
+                      min="1"
+                      max="31"
+                      required
+                      className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3 py-2 text-sm text-white font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="submit"
+                    className="flex-1 rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] px-4 py-2.5 text-xs font-bold text-white transition"
+                  >
+                    Verify Age & Unlock 18+
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAgeState((prev) => ({ ...prev, safeModeEnabled: true }));
+                      setPendingMatureSelect(null);
+                      setShowAgeModal(false);
+                    }}
+                    className="flex-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-4 py-2.5 text-xs font-semibold text-white transition"
+                  >
+                    Keep Safe Mode On
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-modal-title"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-white/15 bg-[#13121A] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 id="auth-modal-title" className="text-lg font-bold text-white">
+                Sign In to Kitsune+
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowAuthModal(false)}
+                className="text-[#94A3B8] hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-[#94A3B8]">
+              Connect your account to save Watchlists and progress across devices.
+            </p>
+            <div className="space-y-3">
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="Email address"
+                className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3.5 py-2 text-sm text-white focus:border-[#F43F5E] focus:outline-none"
+              />
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Password"
+                className="w-full rounded-lg border border-white/15 bg-[#0B0A0E] px-3.5 py-2 text-sm text-white focus:border-[#F43F5E] focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (authEmail) {
+                  setUserSession({ email: authEmail });
+                  setShowAuthModal(false);
+                }
+              }}
+              className="w-full rounded-lg bg-[#F43F5E] hover:bg-[#e11d48] py-2.5 text-sm font-bold text-white transition"
+            >
+              Sign In to Account
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Upgrade Pass Modal */}
+      {showUpgradeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="upgrade-modal-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-amber-400/30 bg-[#13121A] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono uppercase tracking-wider text-amber-400">
+                ✦ Kitsune+ Simulcast Pass
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowUpgradeModal(false)}
+                className="text-[#94A3B8] hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            <h2 id="upgrade-modal-title" className="text-xl font-bold text-white">
+              Uninterrupted 1080p Simulcasts
+            </h2>
+            <ul className="space-y-2 text-sm text-[#CBD5E1]">
+              <li>• Zero banner ads across all screening rooms</li>
+              <li>• Instant 1-hour post-Japan simulcast access</li>
+              <li>• Dual-audio Japanese 2.0 PCM & English 5.1 Dub streams</li>
+            </ul>
+            <div className="pt-2 flex items-center justify-between border-t border-white/10">
+              <div>
+                <div className="text-2xl font-extrabold text-white">$7.99</div>
+                <div className="text-xs text-[#94A3B8]">per month · cancel anytime</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPremium(true);
+                  setShowUpgradeModal(false);
+                }}
+                className="rounded-lg bg-amber-400 hover:bg-amber-300 px-5 py-2.5 text-sm font-bold text-black transition"
+              >
+                Activate Pass
               </button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Sign In / Create Account Modal */}
-      {authModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setAuthModalOpen(false)
-          }}
-        >
-          <div
-            aria-labelledby="auth-modal-title"
-            aria-modal="true"
-            className="relative w-full max-w-md rounded-2xl border border-white/15 bg-[#19142b] p-6 shadow-2xl"
-            role="dialog"
-          >
-            <button
-              aria-label="Close sign in dialog"
-              className="absolute right-4 top-4 text-lg text-[#a79fc4] hover:text-white"
-              onClick={() => setAuthModalOpen(false)}
-              type="button"
-            >
-              ×
-            </button>
-
-            <p className="text-xs font-medium text-[#f6c453]">Kitsune+ Account</p>
-            <h2 className="font-display text-2xl font-bold text-white mt-1" id="auth-modal-title">
-              {authMode === 'signup' ? 'Create your account' : 'Sign in to Kitsune+'}
-            </h2>
-            <p className="mt-1 text-xs text-[#a79fc4]">
-              Sync your anime watchlist, episode progress, and Premium status across devices.
-            </p>
-
-            <form className="mt-5 space-y-3.5" noValidate onSubmit={handleAuthSubmit}>
-              <div>
-                <label className="block text-xs font-medium text-[#cfc8e8] mb-1" htmlFor="em">
-                  Email address
-                </label>
-                <input
-                  autoComplete="email"
-                  className="w-full rounded-xl border border-white/15 bg-[#0e0b18] px-3.5 py-2.5 text-sm text-white placeholder:text-[#a79fc4]/50 focus:border-[#ff5c8a] focus:outline-none"
-                  id="em"
-                  onChange={(e) => {
-                    setAuthEmail(e.target.value)
-                    if (authMessage.text) setAuthMessage({ type: '', text: '' })
-                  }}
-                  placeholder="you@example.com"
-                  required
-                  type="email"
-                  value={authEmail}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[#cfc8e8] mb-1" htmlFor="pw">
-                  Password ({authMode === 'signup' ? '8+ characters' : '6+ characters'})
-                </label>
-                <input
-                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                  className="w-full rounded-xl border border-white/15 bg-[#0e0b18] px-3.5 py-2.5 text-sm text-white placeholder:text-[#a79fc4]/50 focus:border-[#ff5c8a] focus:outline-none"
-                  id="pw"
-                  onChange={(e) => {
-                    setAuthPassword(e.target.value)
-                    if (authMessage.text) setAuthMessage({ type: '', text: '' })
-                  }}
-                  placeholder="••••••••"
-                  required
-                  type="password"
-                  value={authPassword}
-                />
-              </div>
-
-              {authMessage.text && (
-                <p
-                  className={`text-xs ${
-                    authMessage.type === 'error' ? 'text-[#ff8aa8]' : 'text-[#f6c453]'
-                  }`}
-                  role="alert"
-                >
-                  {authMessage.text}
-                </p>
-              )}
-
-              <div className="flex items-center gap-2.5 pt-1">
-                <button
-                  className="flex-1 rounded-xl bg-[#ff5c8a] py-2.5 text-xs font-bold text-white hover:bg-[#ff739b] transition-colors"
-                  type="submit"
-                >
-                  {authMode === 'signup' ? 'Create Free Account' : 'Sign In to Account'}
-                </button>
-                <button
-                  className="rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
-                  onClick={() => {
-                    setAuthMode((m) => (m === 'login' ? 'signup' : 'login'))
-                    setAuthMessage({ type: '', text: '' })
-                  }}
-                  type="button"
-                >
-                  {authMode === 'signup' ? 'Have an account? Sign in' : 'Create account'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Multi-Episode Screening Room Modal */}
-      {activeScreening && (
-        <ScreeningModal
-          anime={activeScreening.anime}
-          comments={commentsMap[activeScreening.anime.id] || []}
-          initialEpisodeIndex={activeScreening.episodeIndex}
-          isInWatchlist={watchlistIds.includes(activeScreening.anime.id)}
-          onAddComment={(c) => handleAddComment(activeScreening.anime.id, c)}
-          onClose={() => setActiveScreening(null)}
-          onEpisodeChange={handleEpisodeProgress}
-          onToggleWatchlist={handleToggleWatchlist}
-          onUpgradeClick={() => {
-            setActiveScreening(null)
-            setActiveNav('premium')
-          }}
-          userPlan={userPlan}
-        />
-      )}
     </div>
-  )
+  );
 }

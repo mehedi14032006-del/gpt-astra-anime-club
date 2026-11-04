@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
-const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
+const metaEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {}
+const supabaseUrl = metaEnv.VITE_SUPABASE_URL?.trim()
+const supabasePublishableKey = metaEnv.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
 
 console.info('[Supabase] Configuration status:', {
   VITE_SUPABASE_URL: supabaseUrl ? 'present' : 'missing',
@@ -12,6 +13,8 @@ export const supabase =
   supabaseUrl && supabasePublishableKey
     ? createClient(supabaseUrl, supabasePublishableKey)
     : null
+
+export const isSupabaseConfigured = Boolean(supabase)
 
 export function getSupabaseErrorMessage(error) {
   const message = error instanceof Error

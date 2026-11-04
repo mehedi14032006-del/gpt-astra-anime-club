@@ -61,17 +61,21 @@ export function getAnimeImageUrl(anime) {
   return ''
 }
 
-export default function AnimeArtwork({
+export function AnimeArtwork({
   anime,
+  src,
+  title: titleProp,
+  japaneseTitle: jpProp,
+  studio: studioProp,
   className = '',
   aspectClass = 'aspect-[3/4]',
   priority = false,
 }) {
   const [imgFailed, setImgFailed] = useState(false)
-  const imageUrl = getAnimeImageUrl(anime)
-  const title = anime?.title_english || anime?.title || anime?.name || 'Kitsune+ Anime'
-  const jpTitle = anime?.title_japanese || '狐アニメ'
-  const studio = anime?.studio || 'Official Selection'
+  const imageUrl = src || getAnimeImageUrl(anime)
+  const title = titleProp || anime?.title_english || anime?.title || anime?.name || 'Kitsune+ Anime'
+  const jpTitle = jpProp || anime?.japanese_title || anime?.title_japanese || '狐アニメ'
+  const studio = studioProp || anime?.studio || 'Official Selection'
   const primaryGenre =
     anime?.genre ||
     (Array.isArray(anime?.genres)
@@ -186,3 +190,6 @@ export default function AnimeArtwork({
     </div>
   )
 }
+
+export default AnimeArtwork
+

@@ -1,161 +1,199 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
-  isMatureRating,
   resolveEmbedSource,
   filterCatalog,
-  toggleWatchlistItem,
+  isMatureAnime,
   updateWatchProgress,
-  validateAuthCredentials,
-} from './catalogLogic.js'
+  verifyAgeFromBirthDate,
+  getAvailabilityStatus,
+  formatTimestamp
+} from './catalogLogic.js';
 
-test('isMatureRating identifies R-17+, R+, and explicit mature flags accurately', () => {
-  assert.equal(isMatureRating('R - 17+ (violence & profanity)', false), true)
-  assert.equal(isMatureRating('PG-13 - Teens 13 or older', false), false)
-  assert.equal(isMatureRating('PG-13', true), true)
-  assert.equal(isMatureRating('', false), false)
-})
+describe('resolveEmbedSource', () => {
+  it('resolves local self-hosted MP4 streams into direct HTML5 video sources', () => {
+    const res = resolveEmbedSource('/streams/sintel-ep1.mp4');
+    assert.equal(res.type, 'video');
+    assert.equal(res.src, '/streams/sintel-ep1.mp4');
+    assert.equal(res.provider, 'Kitsune+ Direct HD CDN');
+  });
 
-test('resolveEmbedSource transforms YouTube playlists, watch URLs, Archive.org, and MP4 URLs', () => {
-  const ytPlaylist = resolveEmbedSource(
-    'https://www.youtube.com/playlist?list=PLwLSw1_eDZl2XdtLhB9NG2Ch050jWFm9G',
-  )
-  assert.deepEqual(ytPlaylist, {
-    type: 'iframe',
-    provider: 'youtube-playlist',
-    src: 'https://www.youtube-nocookie.com/embed/videoseries?autoplay=1&list=PLwLSw1_eDZl2XdtLhB9NG2Ch050jWFm9G',
-  })
+  it('converts YouTube playlist URLs to nocookie videoseries embeds with per-episode index', () => {
+    const res = resolveEmbedSource('https://www.youtube.com/playlist?list=PLwLSw1_eDZl1w0323537261', 4);
+    assert.equal(res.type, 'iframe');
+    assert.equal(
+      res.src,
+      'https://www.youtube-nocookie.com/embed/videoseries?list=PLwLSw1_eDZl1w0323537261&index=4&rel=0'
+    );
+  });
 
-  const ytVideo = resolveEmbedSource('https://youtu.be/dQw4w9WgXcQ')
-  assert.equal(ytVideo?.type, 'iframe')
-  assert.equal(
-    ytVideo?.src,
-    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0',
-  )
+  it('converts YouTube watch URLs and short URLs to nocookie embeds', () => {
+    const watch = resolveEmbedSource('https://www.youtube.com/watch?v=qig4KOK2R2g');
+    assert.equal(watch.type, 'iframe');
+    assert.equal(watch.src, 'https://www.youtube-nocookie.com/embed/qig4KOK2R2g?rel=0');
 
-  const archiveEmbed = resolveEmbedSource('https://archive.org/details/night_of_the_living_dead')
-  assert.equal(archiveEmbed?.src, 'https://archive.org/embed/night_of_the_living_dead')
+    const short = resolveEmbedSource('https://youtu.be/6ohYYtxfDCg');
+    assert.equal(short.type, 'iframe');
+    assert.equal(short.src, 'https://www.youtube-nocookie.com/embed/6ohYYtxfDCg?rel=0');
+  });
 
-  const directVideo = resolveEmbedSource('https://cdn.example.com/episodes/ep1.mp4')
-  assert.deepEqual(directVideo, {
-    type: 'video',
-    provider: 'direct',
-    src: 'https://cdn.example.com/episodes/ep1.mp4',
-  })
+  it('converts Internet Archive detail links to archive.org embeds', () => {
+    const res = resolveEmbedSource('https://archive.org/details/gullivers-travels-1939');
+    assert.equal(res.type, 'iframe');
+    assert.equal(res.src, 'https://archive.org/embed/gullivers-travels-1939');
+  });
 
-  assert.equal(resolveEmbedSource('not-a-url'), null)
-})
+  it('handles empty or invalid URLs safely', () => {
+    assert.deepEqual(resolveEmbedSource(''), { type: 'none', src: '', provider: 'Unknown' });
+    assert.deepEqual(resolveEmbedSource(null), { type: 'none', src: '', provider: 'Unknown' });
+  });
+});
 
-test('filterCatalog filters by search query, genre, audio track, free status, and sorts', () => {
+describe('verifyAgeFromBirthDate', () => {
+  const refDate = new Date('2026-05-01T00:00:00Z');
+
+  it('approves adults who are 18 or older', () => {
+    const res = verifyAgeFromBirthDate({ year: 2000, month: 4, day: 15, minAge: 18 }, refDate);
+    assert.equal(res.validInput, true);
+    assert.equal(res.eligible, true);
+    assert.equal(res.isMinorLock, false);
+    assert.equal(res.age, 26);
+  });
+
+  it('blocks minors under 18 and activates Minor Lock', () => {
+    const res = verifyAgeFromBirthDate({ year: 2011, month: 8, day: 10, minAge: 18 }, refDate);
+    assert.equal(res.validInput, true);
+    assert.equal(res.eligible, false);
+    assert.equal(res.isMinorLock, true);
+    assert.equal(res.age, 14);
+    assert.match(res.error, /Access denied/);
+  });
+
+  it('rejects impossible calendar dates like February 31', () => {
+    const res = verifyAgeFromBirthDate({ year: 1999, month: 2, day: 31, minAge: 18 }, refDate);
+    assert.equal(res.validInput, false);
+    assert.equal(res.eligible, false);
+  });
+});
+
+describe('getAvailabilityStatus', () => {
+  it('marks titles with self-hosted MP4 episodes as direct-hd watchable', () => {
+    const status = getAvailabilityStatus({
+      title: 'Sintel',
+      seasons: [{ season_number: 1, episodes: [{ ep: 1, stream_url: '/streams/sintel-ep1.mp4' }] }]
+    });
+    assert.equal(status.playability, 'direct-hd');
+    assert.equal(status.watchableInApp, true);
+  });
+
+  it('marks partner-exclusive titles as licensed-partner and not falsely watchable', () => {
+    const status = getAvailabilityStatus({
+      title: 'Blue Box',
+      availability_type: 'licensed-partner',
+      is_free: false,
+      trailer_url: 'https://www.youtube.com/embed/v=123'
+    });
+    assert.equal(status.playability, 'licensed-partner');
+    assert.equal(status.watchableInApp, false);
+    assert.ok(status.legalLinks.length > 0);
+  });
+});
+
+describe('filterCatalog & isMatureAnime', () => {
   const sample = [
-    {
-      id: '1',
-      title: 'One Punch Man',
-      genre: 'Action',
-      genres: ['Action', 'Comedy'],
-      score: 8.5,
-      year: 2015,
-      is_free_series: true,
-      has_dub: true,
-      is_mature: false,
-      popularity_rank: 2,
-    },
-    {
-      id: '2',
-      title: 'Frieren: Beyond Journey’s End',
-      genre: 'Fantasy',
-      genres: ['Fantasy', 'Adventure'],
-      score: 9.3,
-      year: 2023,
-      is_free_series: false,
-      has_dub: true,
-      is_mature: false,
-      popularity_rank: 1,
-    },
-    {
-      id: '3',
-      title: 'Attack on Titan',
-      genre: 'Action',
-      genres: ['Action', 'Drama'],
-      score: 9.0,
-      year: 2013,
-      is_free_series: true,
-      has_dub: false,
-      is_mature: true,
-      popularity_rank: 3,
-    },
-  ]
+    { id: 1, title: 'Frieren: Beyond Journey’s End', format: 'TV', simulcast: true, genres: ['Adventure', 'Fantasy'], rating: 'PG-13', seasons: [{ episodes: [{ stream_url: '/streams/fantasy-stream.mp4' }] }] },
+    { id: 2, title: 'Chainsaw Man: Public Safety Uncut', format: 'TV', genres: ['Action', 'Horror'], rating: 'R - 17+', mature: true, seasons: [{ episodes: [{ stream_url: '/streams/mature-stream.mp4' }] }] },
+    { id: 3, title: 'Suzume', format: 'Movie', genres: ['Adventure', 'Fantasy'], rating: 'PG-13', seasons: [{ episodes: [{ stream_url: '/streams/drama-stream.mp4' }] }] }
+  ];
 
-  const actionOnly = filterCatalog(sample, { genre: 'Action' })
-  assert.equal(actionOnly.length, 2)
+  it('identifies mature anime and filters by format, genre, query, and hideMature', () => {
+    assert.equal(isMatureAnime(sample[0]), false);
+    assert.equal(isMatureAnime(sample[1]), true);
 
-  const freeActionNonMature = filterCatalog(sample, {
-    genre: 'Action',
-    onlyFree: true,
-    hideMature: true,
-  })
-  assert.equal(freeActionNonMature.length, 1)
-  assert.equal(freeActionNonMature[0].title, 'One Punch Man')
+    const safeOnly = filterCatalog(sample, { hideMature: true });
+    assert.equal(safeOnly.length, 2);
 
-  const byScore = filterCatalog(sample, { sortBy: 'score' })
-  assert.equal(byScore[0].title, 'Frieren: Beyond Journey’s End')
+    const moviesOnly = filterCatalog(sample, { format: 'Movie' });
+    assert.equal(moviesOnly.length, 1);
+    assert.equal(moviesOnly[0].title, 'Suzume');
+  });
+});
 
-  const queryMatch = filterCatalog(sample, { query: 'titan' })
-  assert.equal(queryMatch.length, 1)
-  assert.equal(queryMatch[0].id, '3')
-})
+describe('updateWatchProgress & formatTimestamp', () => {
+  it('calculates progress percentage and stores second-accurate resume timestamps', () => {
+    const map = updateWatchProgress({}, {
+      animeId: '52991',
+      seasonNumber: 2,
+      episodeNumber: 3,
+      totalEpisodes: 12,
+      episodeTitle: 'Episode 3',
+      resumeSeconds: 480,
+      durationSeconds: 960
+    });
+    assert.equal(map['52991'].seasonNumber, 2);
+    assert.equal(map['52991'].episodeNumber, 3);
+    assert.equal(map['52991'].resumeSeconds, 480);
+    assert.equal(formatTimestamp(125), '02:05');
+  });
+});
 
-test('toggleWatchlistItem adds and removes anime IDs deterministically', () => {
-  const step1 = toggleWatchlistItem([], 'fb0')
-  assert.deepEqual(step1, ['fb0'])
+describe('resolveEpisodeVideo (videoRegistry)', () => {
+  it('resolves distinct videos for different episodes of the same anime', async () => {
+    const { resolveEpisodeVideo } = await import('./videoRegistry.js');
+    const ep1 = await resolveEpisodeVideo({
+      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    const ep2 = await resolveEpisodeVideo({
+      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      seasonNumber: 1,
+      episodeNumber: 2
+    });
 
-  const step2 = toggleWatchlistItem(step1, 'fb1')
-  assert.deepEqual(step2, ['fb1', 'fb0'])
+    assert.equal(ep1.available, true);
+    assert.equal(ep2.available, true);
+    assert.equal(ep1.streamUrl, '/streams/sintel-ep1.mp4');
+    assert.equal(ep2.streamUrl, '/streams/sintel-ep2.mp4');
+    assert.notEqual(ep1.streamUrl, ep2.streamUrl, 'Different episodes must have different video files!');
+  });
 
-  const step3 = toggleWatchlistItem(step2, 'fb0')
-  assert.deepEqual(step3, ['fb1'])
-})
+  it('resolves completely different videos for different anime titles', async () => {
+    const { resolveEpisodeVideo } = await import('./videoRegistry.js');
+    const sintel = await resolveEpisodeVideo({
+      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    const tears = await resolveEpisodeVideo({
+      anime: { id: 'tears-of-steel', title: 'Tears of Steel' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    const elephants = await resolveEpisodeVideo({
+      anime: { id: 'elephants-dream', title: 'Elephants Dream' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
 
-test('updateWatchProgress deduplicates and moves latest watched anime to the top', () => {
-  const h1 = updateWatchProgress([], {
-    animeId: 'fb0',
-    episodeNumber: 1,
-    episodeTitle: 'The Strongest Man',
-    progressPercent: 45,
-    timestamp: 1000,
-  })
-  assert.equal(h1.length, 1)
-  assert.equal(h1[0].progressPercent, 45)
+    assert.equal(sintel.streamUrl, '/streams/sintel-ep1.mp4');
+    assert.equal(tears.streamUrl, '/streams/tears-ep1.mp4');
+    assert.equal(elephants.streamUrl, '/streams/elephants-ep1.mp4');
+    assert.notEqual(sintel.streamUrl, tears.streamUrl);
+    assert.notEqual(tears.streamUrl, elephants.streamUrl);
+  });
 
-  const h2 = updateWatchProgress(h1, {
-    animeId: 'fb1',
-    episodeNumber: 2,
-    progressPercent: 80,
-    timestamp: 2000,
-  })
-  assert.equal(h2[0].animeId, 'fb1')
+  it('marks unhosted AniList anime as unavailable without playing another title video', async () => {
+    const { resolveEpisodeVideo } = await import('./videoRegistry.js');
+    const bokuNoPico = await resolveEpisodeVideo({
+      anime: { id: '539', title: 'Boku no Pico' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
 
-  const h3 = updateWatchProgress(h2, {
-    animeId: 'fb0',
-    episodeNumber: 3,
-    progressPercent: 90,
-    timestamp: 3000,
-  })
-  assert.equal(h3.length, 2)
-  assert.equal(h3[0].animeId, 'fb0')
-  assert.equal(h3[0].episodeNumber, 3)
-})
+    assert.equal(bokuNoPico.available, false);
+    assert.equal(bokuNoPico.streamUrl, null, 'Must NEVER return a fallback or another anime video!');
+    assert.match(bokuNoPico.reason, /In-app direct video stream is not hosted/);
+  });
+});
 
-test('validateAuthCredentials enforces email format and password length requirements', () => {
-  assert.equal(validateAuthCredentials({ email: '', password: 'password123' }).valid, false)
-  assert.equal(validateAuthCredentials({ email: 'bad-email', password: 'password123' }).valid, false)
-  assert.equal(
-    validateAuthCredentials({ email: 'fan@kitsune.plus', password: 'short', mode: 'signup' }).valid,
-    false,
-  )
-  assert.equal(
-    validateAuthCredentials({ email: 'fan@kitsune.plus', password: 'strongPassword9!', mode: 'signup' })
-      .valid,
-    true,
-  )
-})
