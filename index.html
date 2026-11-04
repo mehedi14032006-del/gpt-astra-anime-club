@@ -20,8 +20,8 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px
 .ad{margin:0;padding:8px 20px;text-align:center;font-size:13px;color:var(--mut);background:repeating-linear-gradient(45deg,var(--surf),var(--surf) 10px,var(--surf2) 10px,var(--surf2) 20px)}
 .hero{min-height:300px;display:flex;align-items:flex-end;padding:40px 20px;background:radial-gradient(circle at 78% 30%,#ff5c8a99,transparent 45%),radial-gradient(circle at 90% 80%,#5b3df5aa,transparent 50%),linear-gradient(120deg,#2a1257,#120d24 70%)}
 .hero>div{max-width:560px}.hero h1{font-size:clamp(30px,6vw,52px);line-height:1.05;margin:0 0 10px}.hero p{color:var(--mut);margin:0}
-.btn{display:inline-block;padding:11px 22px;border-radius:10px;background:var(--pink);color:#fff;font-weight:700;margin-right:8px;text-decoration:none}
-.btn.alt{background:var(--surf2)}.btn.gold{background:var(--gold);color:#2a1d00}
+.btn{display:inline-block;padding:11px 22px;border-radius:10px;background:var(--pink);color:#fff;font-weight:700;margin:0 8px 8px 0;text-decoration:none}
+.btn.alt{background:var(--surf2)}.btn.gold{background:var(--gold);color:#2a1d00}.btn.on{outline:2px solid var(--gold)}
 .chips{display:flex;gap:8px;padding:18px 20px 0;overflow-x:auto}
 .chips button{flex:none;padding:6px 14px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}.chips button.on{background:var(--tx);color:var(--bg);border-color:var(--tx)}
 section.row{padding:22px 20px 0}.row h2{font-size:20px;margin:0 0 12px;display:flex;align-items:center;gap:10px}
@@ -29,10 +29,10 @@ section.row{padding:22px 20px 0}.row h2{font-size:20px;margin:0 0 12px;display:f
 .rail{display:flex;gap:14px;overflow-x:auto;padding-bottom:10px}
 .rail.grid{flex-wrap:wrap;overflow:visible}
 .card{flex:none;width:150px;text-align:left}
-.poster{height:215px;border-radius:12px;position:relative;overflow:hidden;background:var(--surf2);transition:transform .2s}
-.poster img{width:100%;height:100%;object-fit:cover;display:block}
+.poster{height:215px;border-radius:12px;position:relative;overflow:hidden;background:linear-gradient(160deg,#5b3df5,#2a1257);transition:transform .2s;display:flex;align-items:flex-end;padding:10px;font-weight:800}
+.poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .card:hover .poster{transform:translateY(-4px)}
-.poster i{position:absolute;top:8px;left:8px;font-style:normal;font-size:11px;font-weight:700;background:#000a;padding:2px 7px;border-radius:5px}
+.poster i{position:absolute;top:8px;left:8px;font-style:normal;font-size:11px;font-weight:700;background:#000a;padding:2px 7px;border-radius:5px;z-index:1}
 .poster i.sc{left:auto;right:8px;background:var(--gold);color:#2a1d00}
 .card b{display:block;margin-top:8px;font-size:14px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .card small{display:block;color:var(--mut);font-size:12px}
@@ -46,8 +46,8 @@ footer{padding:36px 20px 50px;color:var(--mut);font-size:14px}
 .gate{max-width:380px;text-align:center}
 .gate input{width:100%;padding:10px 12px;margin:6px 0;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--tx);font:inherit}
 .msg{min-height:22px;color:var(--gold);font-size:14px}
-.screen{aspect-ratio:16/9;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:12px;background:#000;overflow:hidden}
-.screen iframe{width:100%;height:100%;border:0;margin:-12px}
+.screen{aspect-ratio:16/9;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:12px;background:#000;overflow:hidden;color:#fff}
+.screen iframe,.screen video{width:calc(100% + 24px);height:calc(100% + 24px);border:0;margin:-12px}
 .info{margin-top:14px;color:var(--mut);font-size:14px}.info p{margin:0 0 10px}
 .x{float:right;font-size:22px;color:var(--mut)}
 @media (prefers-reduced-motion:reduce){.poster{transition:none}}
@@ -62,20 +62,20 @@ footer{padding:36px 20px 50px;color:var(--mut);font-size:14px}
 <p class="ad" id="topad">Ad space · banner ads show here on the free plan</p>
 <div class="hero"><div>
   <h1>Find your next anime</h1>
-  <p>Browse thousands of titles, watch official trailers, and see where each show streams legally.</p>
+  <p>Browse thousands of titles, watch official trailers and free licensed episodes, and see where each show streams legally.</p>
 </div></div>
 <div class="chips" id="chips"></div>
 <div id="rows"></div>
 <section class="row" id="premium">
   <h2>Choose your plan</h2>
   <div class="plans">
-    <div class="pc"><h3>Free</h3><div class="pr">$0</div><ul><li>Full catalog</li><li>Ads before trailers</li></ul></div>
+    <div class="pc"><h3>Free</h3><div class="pr">$0</div><ul><li>Full catalog</li><li>Ads before videos</li></ul></div>
     <div class="pc pm"><h3>Premium</h3><div class="pr">$7.99<small style="font-size:14px;color:var(--mut)"> / month</small></div>
       <ul><li>No ads, ever</li><li>Early access to licensed episodes</li><li>Watchlist sync across devices</li></ul>
       <button class="btn gold" id="gopm">Go Premium</button></div>
   </div>
 </section>
-<footer>Catalog data from MyAnimeList via the Jikan API. Trailers from YouTube. Full episodes are on licensed services such as Crunchyroll, HIDIVE and Netflix.</footer>
+<footer>Catalog data from MyAnimeList via the Jikan API. Trailers and free episodes are played from their official YouTube and Internet Archive pages. Availability varies by country. Full series are on licensed services such as Crunchyroll, HIDIVE and Netflix.</footer>
 
 <div class="ov" id="auth"><div class="box gate">
   <button class="x" id="authx" aria-label="Close">×</button>
@@ -107,8 +107,8 @@ var API="https://api.jikan.moe/v4";
 var GID={"Action":1,"Adventure":2,"Comedy":4,"Drama":8,"Fantasy":10,"Romance":22,"Sci-Fi":24};
 var G=["All"].concat(Object.keys(GID));
 var S={plan:"free",genre:"All",age:false,q:"",pending:null,timer:null,session:null,tok:0};
-var R={trending:undefined,popular:undefined,mature:undefined,results:undefined};
-var A={};
+var R={trending:undefined,popular:undefined,mature:undefined,results:undefined,lib:[]};
+var A={},L={};
 var $=function(i){return document.getElementById(i)};
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
@@ -123,18 +123,27 @@ function card(a){
   var img=a.images&&a.images.jpg?a.images.jpg.large_image_url||a.images.jpg.image_url:"";
   var t=a.title_english||a.title;
   return'<button class="card" data-play="'+a.mal_id+'"><div class="poster"><img loading="lazy" src="'+esc(img)+'" alt="">'+(isMature(a)?'<i>18+</i>':'')+(a.score?'<i class="sc">★ '+a.score+'</i>':'')+'</div><b>'+esc(t)+'</b><small>'+esc(a.type||"")+(a.episodes?' · '+a.episodes+' episodes':'')+'</small></button>'}
+function libCard(t){
+  return'<button class="card" data-lib="'+esc(t.id)+'"><div class="poster">'+(t.poster_url?'<img loading="lazy" src="'+esc(t.poster_url)+'" alt="">':esc(t.name))+(t.is_mature?'<i>18+</i>':'')+'<i class="sc">Free</i></div><b>'+esc(t.name)+'</b><small>'+t.episodes.length+' episode'+(t.episodes.length==1?'':'s')+'</small></button>'}
 function rowHtml(title,list,tag,grid){
   if(list===undefined)return'<section class="row"><h2>'+title+'</h2><p class="empty">Loading...</p></section>';
   if(!list.length)return grid?'<section class="row"><h2>'+title+'</h2><p class="empty">No titles found. Try another search or genre.</p></section>':'';
   return'<section class="row"><h2>'+title+(tag?' <span class="tag">18+</span>':'')+'</h2><div class="rail'+(grid?' grid':'')+'">'+list.map(card).join("")+'</div></section>'}
 function render(){
-  var out=(S.q||S.genre!="All")?rowHtml("Results",R.results,0,1):rowHtml("Airing now",R.trending)+rowHtml("Most popular",R.popular)+rowHtml("Mature",R.mature,1);
-  $("rows").innerHTML=out;
+  var searching=S.q||S.genre!="All";
+  var lib=(!searching&&R.lib.length)?'<section class="row"><h2>Free full episodes</h2><div class="rail">'+R.lib.map(libCard).join("")+'</div></section>':"";
+  $("rows").innerHTML=searching?rowHtml("Results",R.results,0,1):lib+rowHtml("Airing now",R.trending)+rowHtml("Most popular",R.popular)+rowHtml("Mature",R.mature,1);
   $("chips").innerHTML=G.map(function(g){return'<button class="'+(g==S.genre?"on":"")+'" data-g="'+g+'">'+g+'</button>'}).join("");
   $("topad").style.display=S.plan=="free"?"block":"none";
   $("badge").textContent=S.plan=="pm"?"Premium":"Free";$("badge").className="badge"+(S.plan=="pm"?" pm":"");
   $("acct").textContent=S.session?"Sign out":"Sign in";
   $("gopm").textContent=S.plan=="pm"?"You are Premium":"Go Premium"}
+async function loadLib(){
+  try{
+    var r=await sb.from("titles").select("id,name,synopsis,genre,poster_url,is_mature,episodes(id,episode_number,name,video_url)").order("created_at",{ascending:false});
+    R.lib=(r.data||[]).filter(function(t){return t.episodes&&t.episodes.length}).map(function(t){t.episodes.sort(function(a,b){return a.episode_number-b.episode_number});L[t.id]=t;return t});
+  }catch(e){R.lib=[]}
+  render()}
 async function loadHome(){
   R.trending=keep(await jget("/top/anime?filter=airing&sfw=true&limit=14"));render();await sleep(500);
   R.popular=keep(await jget("/top/anime?filter=bypopularity&sfw=true&limit=14"));render();await sleep(500);
@@ -151,12 +160,14 @@ async function loadPlan(){
   if(!S.session){S.plan="free";render();return}
   var p=await sb.from("profiles").select("subscription_tier,age_confirmed").single();
   if(p.data){S.plan=p.data.subscription_tier=="premium"?"pm":"free";if(p.data.age_confirmed)S.age=true}
-  render()}
+  await loadLib();render()}
 var deb;
 $("q").oninput=function(e){S.q=e.target.value.trim();clearTimeout(deb);deb=setTimeout(runQuery,600)};
 document.addEventListener("click",function(e){
   var g=e.target.closest("[data-g]");if(g){S.genre=g.dataset.g;runQuery();return}
-  var p=e.target.closest("[data-play]");if(p)openTitle(+p.dataset.play)});
+  var p=e.target.closest("[data-play]");if(p){openTitle(+p.dataset.play);return}
+  var l=e.target.closest("[data-lib]");if(l){openLib(l.dataset.lib);return}
+  var ep=e.target.closest("[data-ep]");if(ep)playEp(ep.dataset.t,+ep.dataset.ep)});
 /* Auth */
 $("acct").onclick=async function(){if(S.session){await sb.auth.signOut();S.age=false;loadPlan()}else $("auth").classList.add("show")};
 $("authx").onclick=function(){$("auth").classList.remove("show")};
@@ -177,34 +188,67 @@ $("gopm").onclick=async function(){
     var r=await fetch("/api/checkout",{method:"POST",headers:{Authorization:"Bearer "+S.session.access_token}});
     var d=await r.json();if(d.url)location.href=d.url;else throw 0}
   catch(e){this.textContent="Try again"}};
-/* Title page: ad (free plan) then official trailer */
+/* Player helpers */
+function embedOf(u){
+  try{
+    var x=new URL(u),h=x.hostname.replace(/^www\./,"");
+    if(h=="youtube.com"||h=="m.youtube.com"||h=="youtu.be"||h=="youtube-nocookie.com"){
+      var id=h=="youtu.be"?x.pathname.slice(1):(x.searchParams.get("v")||((x.pathname.match(/\/(?:embed|shorts)\/([\w-]{6,})/)||[])[1]));
+      var list=x.searchParams.get("list");
+      if(id&&id!="videoseries")return{t:"f",s:"https://www.youtube-nocookie.com/embed/"+encodeURIComponent(id)+"?autoplay=1"+(list?"&list="+encodeURIComponent(list):"")};
+      if(list)return{t:"f",s:"https://www.youtube-nocookie.com/embed/videoseries?autoplay=1&list="+encodeURIComponent(list)};
+    }
+    if(h=="archive.org"){var m=x.pathname.match(/\/(?:details|embed)\/([^\/]+)/);if(m)return{t:"f",s:"https://archive.org/embed/"+encodeURIComponent(m[1])}}
+    if(/\.(mp4|webm)$/i.test(x.pathname)&&x.protocol=="https:")return{t:"v",s:x.href}
+  }catch(e){}
+  return null}
+function runAd(done){
+  var n=5;clearInterval(S.timer);
+  function paint(){$("sc").innerHTML='<b>Ad · video starts in '+n+'</b><span style="opacity:.8;font-size:14px">Go Premium to remove ads</span>'}
+  paint();S.timer=setInterval(function(){n--;if(n<=0){clearInterval(S.timer);done()}else paint()},1000)}
+function mount(m){
+  var s=$("sc");
+  if(!m){s.innerHTML='<span>This video is not available.</span>';return}
+  s.innerHTML=m.t=="v"?'<video controls autoplay playsinline src="'+esc(m.s)+'"></video>':'<iframe src="'+esc(m.s)+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Video"></iframe>'}
+function gated(m,key){if(m&&!S.age){S.pending=key;$("age").classList.add("show");return true}return false}
+/* Jikan title: official trailer + free-channel search */
 function openTitle(id){
   var a=A[id];if(!a)return;
-  if(isMature(a)&&!S.age){S.pending=id;$("age").classList.add("show");return}
+  if(gated(isMature(a),{k:"a",id:id}))return;
   var t=a.title_english||a.title;
   $("pt").textContent=t;
   var g=(a.genres||[]).map(function(x){return x.name}).join(", ");
   var syn=(a.synopsis||"No description available.");if(syn.length>420)syn=syn.slice(0,420)+"...";
   $("info").innerHTML='<p>'+esc(syn)+'</p><p>'+esc([a.type,a.status,a.year,g,a.rating].filter(Boolean).join(" · "))+'</p>'
-    +'<a class="btn" target="_blank" rel="noopener" href="https://www.crunchyroll.com/search?q='+encodeURIComponent(t)+'">Find on Crunchyroll</a>'
+    +'<a class="btn" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query='+encodeURIComponent(t+" Muse Asia Ani-One full episode")+'">Free on official YouTube channels</a>'
+    +'<a class="btn alt" target="_blank" rel="noopener" href="https://www.crunchyroll.com/search?q='+encodeURIComponent(t)+'">Find on Crunchyroll</a>'
     +'<a class="btn alt" target="_blank" rel="noopener" href="'+esc(a.url)+'">MyAnimeList page</a>';
   $("pl").classList.add("show");
-  if(S.plan=="free")runAd(a);else showTrailer(a)}
-function runAd(a){
-  var n=5;clearInterval(S.timer);
-  function paint(){$("sc").innerHTML='<b style="color:#fff">Ad · trailer starts in '+n+'</b><span style="color:#ffffffcc;font-size:14px">Go Premium to remove ads</span>'}
-  paint();S.timer=setInterval(function(){n--;if(n<=0){clearInterval(S.timer);showTrailer(a)}else paint()},1000)}
-function showTrailer(a){
-  var s=$("sc"),u=a.trailer&&a.trailer.embed_url;
-  if(u)s.innerHTML='<iframe src="'+esc(u)+'" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Trailer"></iframe>';
-  else s.innerHTML='<span style="color:#fff">No trailer available for this title.</span>'}
+  var u=a.trailer&&a.trailer.embed_url,m=u?{t:"f",s:u}:null;
+  if(S.plan=="free")runAd(function(){mount(m)});else mount(m)}
+/* Library title: full episodes from the database */
+function openLib(id){
+  var t=L[id];if(!t)return;
+  if(gated(t.is_mature,{k:"l",id:id}))return;
+  $("pt").textContent=t.name;
+  $("info").innerHTML=(t.synopsis?'<p>'+esc(t.synopsis)+'</p>':'')+'<p>Choose an episode:</p>'+t.episodes.map(function(e,i){return'<button class="btn alt" data-t="'+esc(id)+'" data-ep="'+i+'">'+(e.name?esc(e.name):'Episode '+e.episode_number)+'</button>'}).join("");
+  $("sc").innerHTML='<span>Pick an episode below</span>';
+  $("pl").classList.add("show");
+  playEp(id,0)}
+function playEp(id,i){
+  var t=L[id],e=t&&t.episodes[i];if(!e)return;
+  clearInterval(S.timer);
+  var btns=document.querySelectorAll("[data-ep]");for(var k=0;k<btns.length;k++)btns[k].classList.toggle("on",k==i);
+  var m=embedOf(e.video_url);
+  if(S.plan=="free")runAd(function(){mount(m)});else mount(m)}
 function closePl(){clearInterval(S.timer);$("sc").innerHTML="";$("pl").classList.remove("show")}
 $("cl").onclick=closePl;$("pl").onclick=function(e){if(e.target==this)closePl()};
 $("yes").onclick=async function(){S.age=true;$("age").classList.remove("show");
   if(S.session)await sb.rpc("confirm_age");
-  if(S.pending!=null)openTitle(S.pending)};
+  var p=S.pending;S.pending=null;
+  if(p)p.k=="l"?openLib(p.id):openTitle(p.id)};
 $("no").onclick=function(){$("age").classList.remove("show")};
-render();loadPlan();loadHome();
+render();loadPlan();loadLib();loadHome();
 if(location.search.indexOf("checkout=success")>-1){var tries=0,iv=setInterval(function(){loadPlan();if(S.plan=="pm"||++tries>8){clearInterval(iv);history.replaceState(null,"","/")}},2000)}
 </script>
 </body>
