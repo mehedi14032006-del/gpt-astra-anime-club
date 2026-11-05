@@ -24,7 +24,10 @@ import {
  * - Authentic Audio & Subtitles: Never attaches universal fictional VTT files across titles.
  * - Real Media Duration: Reads actual duration (`vid.duration`) directly from the verified HTML5
  *   video stream on `loadedmetadata` / `durationchange`.
+ * - No invented facts: score, rating, year and studio are shown only when the catalog provides them.
  */
+const PROGRESS_SAVE_INTERVAL_MS = 5000;
+
 export function ScreeningModal({
   anime,
   initialSeasonNumber = 1,
@@ -69,6 +72,7 @@ export function ScreeningModal({
 
   const [asyncResolution, setAsyncResolution] = useState(null);
   const requestVersionRef = useRef(0);
+  const lastSavedRef = useRef(0);
 
   useEffect(() => {
     requestVersionRef.current += 1;
@@ -150,7 +154,8 @@ export function ScreeningModal({
   const canonicalEpisodeId = resolvedPlayback.episodeId || `${canonicalSeasonId}:e${selectedEp}`;
   const canonicalContentType = resolvedPlayback.contentType || 'unavailable';
 
-  // Reset player state whenever anime, season, or episode changes so no previous stream is retained
+  // Reset player state ONLY when the selected anime, season or episode changes, so no previous stream
+  // is retained. Background metadata arriving for the same episode must never pause or reset playback.
   useEffect(() => {
     if (videoRef.current) {
       try {
@@ -159,6 +164,7 @@ export function ScreeningModal({
         // ignore
       }
     }
+    lastSavedRef.current = 0;
     setVideoError(null);
     setRetryCount(0);
     setIsBuffering(false);
@@ -168,7 +174,23 @@ export function ScreeningModal({
     setSelectedAudioIdx(0);
     setSubtitleLang(verifiedSubtitles[0]?.srcLang || 'off');
     setSourceMode('direct');
-  }, [anime?.id, selectedSeasonNum, selectedEp, resolvedPlayback.durationSeconds, verifiedSubtitles.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anime?.id, selectedSeasonNum, selectedEp]);
+
+  // When verified metadata arrives later for the same episode, update duration and the default
+  // subtitle without touching playback.
+  useEffect(() => {
+    if (!verifiedStreamDuration) {
+      setDuration(resolvedPlayback.durationSeconds || 0);
+    }
+  }, [resolvedPlayback.durationSeconds, verifiedStreamDuration]);
+
+  useEffect(() => {
+    setSubtitleLang((prev) =>
+      prev === 'off' && verifiedSubtitles[0] ? verifiedSubtitles[0].srcLang : prev
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifiedSubtitles.length]);
 
   // Sync playbackRate with <video>
   useEffect(() => {
@@ -290,8 +312,10 @@ export function ScreeningModal({
         : duration;
     setCurrentTime(nowSec);
 
-    // Persist watch history every 2 seconds using real media duration
-    if (Math.floor(nowSec) % 2 === 0 && nowSec > 0.5 && durSec > 0) {
+    // Persist watch history at most once every few seconds, using the real media duration
+    const nowMs = Date.now();
+    if (nowSec > 0.5 && durSec > 0 && nowMs - lastSavedRef.current >= PROGRESS_SAVE_INTERVAL_MS) {
+      lastSavedRef.current = nowMs;
       onSelectEpisode?.({
         anime,
         seasonNumber: selectedSeasonNum,
@@ -383,6 +407,12 @@ export function ScreeningModal({
     resolvedPlayback.episodeTitle ||
     exactEpObj?.title ||
     `Episode ${selectedEp}`;
+
+  // Only facts the catalog actually provides are shown (no invented defaults).
+  const metaFacts = [
+    anime.studio,
+    [anime.format, anime.year].filter(Boolean).join(' ') || null
+  ].filter(Boolean);
 
   const defaultCrunchyrollSearch = `https://www.crunchyroll.com/search?q=${encodeURIComponent(`${anime.title} episode ${selectedEp}`)}`;
   const defaultNetflixSearch = `https://www.netflix.com/search?q=${encodeURIComponent(anime.title)}`;
@@ -626,7 +656,7 @@ export function ScreeningModal({
                           onClick={() => setSourceMode('partner-notice')}
                           className="rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 px-3.5 py-1.5 text-xs font-semibold text-white transition"
                         >
-                          View Mirror Links
+                          Licensed Providers
                         </button>
                       </div>
                     </div>
@@ -919,16 +949,26 @@ export function ScreeningModal({
             <div className="p-4 sm:p-6 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-[#94A3B8]">
-                  <span>{anime.studio || 'Animation Studio'}</span>
-                  <span>·</span>
-                  <span>{anime.format || 'TV'} ({anime.year || 2024})</span>
-                  <span>·</span>
-                  <span className="text-amber-400 font-bold">★ {anime.score || '8.0'}</span>
-                  <span>·</span>
-                  <span className="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">
-                    {anime.rating || 'PG-13'}
-                  </span>
-                  <span>·</span>
+                  {metaFacts.map((fact) => (
+                    <React.Fragment key={fact}>
+                      <span>{fact}</span>
+                      <span>·</span>
+                    </React.Fragment>
+                  ))}
+                  {anime.score ? (
+                    <>
+                      <span className="text-amber-400 font-bold">★ {anime.score}</span>
+                      <span>·</span>
+                    </>
+                  ) : null}
+                  {anime.rating ? (
+                    <>
+                      <span className="px-2 py-0.5 rounded bg-white/10 text-white font-semibold">
+                        {anime.rating}
+                      </span>
+                      <span>·</span>
+                    </>
+                  ) : null}
                   <span className={hasDirectStream ? 'text-emerald-400 font-semibold' : 'text-amber-400'}>
                     {hasDirectStream
                       ? `Full Episode Verified (${displayedRuntimeLabel})`
