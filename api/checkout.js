@@ -63,6 +63,11 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Invalid or expired authentication session. Please sign in again.' });
     }
 
+    // Guest (anonymous) sessions cannot buy Premium: a purchase must belong to a real, recoverable account.
+    if (data.user.is_anonymous || !data.user.email) {
+      return res.status(403).json({ error: 'Please create a free account before upgrading to Premium.' });
+    }
+
     const stripe = new Stripe(stripeSecretKey);
     const origin = resolveSafeOrigin(req);
     const priceId = process.env.STRIPE_PRICE_ID;

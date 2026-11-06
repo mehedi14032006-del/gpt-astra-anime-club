@@ -11,6 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 </head>
 <body class="bg-[#0b0914] text-[#f5f1ff] antialiased selection:bg-[#ff5c8a] selection:text-white">
   <div id="root"></div>
@@ -19,6 +20,28 @@
     <div style="margin-top:6px">Kitsune+ only shows officially licensed, openly licensed or public-domain video. No piracy.</div>
   </footer>
   <a href="/watch.html" style="position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:40;background:#ff5c8a;color:#fff;font:700 15px/1 'Plus Jakarta Sans',system-ui,sans-serif;padding:14px 20px;border-radius:999px;text-decoration:none;box-shadow:0 6px 24px #ff5c8a66">▶ Watch free series</a>
+  <script>
+  /* One-tap guest mode: signs in anonymously (a real, private session) when nobody is signed in. */
+  (function(){
+    try{
+      var sb=supabase.createClient("https://deisgdxetikwkpxrgroz.supabase.co","eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlaXNnZHhldGlrd2tweHJncm96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4Mjg0MTIsImV4cCI6MjEwNzQwNDQxMn0.BpYuT1D7Lc-YdPdTWzDNgM_TnUwo7mnNT-9uCtjeqyg");
+      sb.auth.getSession().then(function(r){
+        if(r.data&&r.data.session)return;
+        var b=document.createElement("button");
+        b.type="button";b.textContent="Continue as guest";
+        b.style.cssText="position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:40;background:#2a2048;color:#fff;border:1px solid #4b3b85;font:700 15px/1 'Plus Jakarta Sans',system-ui,sans-serif;padding:14px 20px;border-radius:999px;cursor:pointer";
+        b.onclick=function(){
+          b.disabled=true;b.textContent="One moment...";
+          sb.auth.signInAnonymously().then(function(x){
+            if(x.error){b.disabled=false;b.textContent="Guest mode is not available yet";return}
+            location.reload();
+          });
+        };
+        document.body.appendChild(b);
+      });
+    }catch(e){}
+  })();
+  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
