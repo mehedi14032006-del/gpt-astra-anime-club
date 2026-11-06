@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Watch free anime – Kitsune+</title>
+<title>Watch free – Kitsune+</title>
 <style>
 :root{--bg:#0b0914;--surf:#1d1636;--surf2:#2a2048;--tx:#f5f1ff;--mut:#a79fc4;--pink:#ff5c8a;--gold:#f6c453;color-scheme:dark}
 *{box-sizing:border-box}
@@ -12,8 +12,8 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;pa
 .logo{font-weight:800;font-size:20px}.logo b{color:var(--pink)}
 a{color:var(--gold)}
 main{padding:18px;max-width:1100px;margin:0 auto}
-h1{font-size:clamp(24px,5vw,38px);margin:8px 0}
-p.n{color:var(--mut);margin:0 0 18px;max-width:640px}
+h1{font-size:clamp(24px,5vw,38px);margin:8px 0}h2{font-size:21px;margin:30px 0 6px}
+p.n{color:var(--mut);margin:0 0 16px;max-width:660px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;text-align:left;padding:0}
 .poster{height:210px;border-radius:12px;display:flex;align-items:flex-end;padding:12px;font-weight:800;line-height:1.2;text-shadow:0 1px 6px #000a;position:relative;transition:transform .2s}
@@ -27,8 +27,8 @@ small{display:block;color:var(--mut);margin-top:6px;font-size:13px}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .top h2{font-size:18px;margin:0}
 .x{font-size:24px;color:var(--mut);padding:4px 10px}
-.scr{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
-.scr iframe{width:100%;height:100%;border:0}
+.scr{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px}
+.scr iframe,.scr video{width:100%;height:100%;border:0;background:#000}
 .tip{color:var(--mut);font-size:14px;margin:10px 0 0}
 .btn{display:inline-block;margin-top:10px;padding:10px 16px;border-radius:10px;background:var(--surf2);color:#fff;text-decoration:none;font-weight:700}
 </style>
@@ -36,19 +36,33 @@ small{display:block;color:var(--mut);margin-top:6px;font-size:13px}
 <body>
 <header><span class="logo">Kitsune<b>+</b></span><a href="/">← Back to catalog</a></header>
 <main>
-<h1>Watch free full series</h1>
-<p class="n">Full episodes (about 24 minutes each) from the official Muse Asia and Muse PH YouTube channels. Tap a series, then use the player’s Next button to move to the next episode. Some countries are blocked by the channel.</p>
+<h1>Watch free</h1>
+
+<h2>Play right here on our site</h2>
+<p class="n">Openly licensed and public-domain animation. These play in our own player with no other site involved. They are short films and classic cartoons, not anime series.</p>
+<div class="grid" id="d"></div>
+
+<h2>Free full anime series (official channels)</h2>
+<p class="n">Full episodes, about 24 minutes each, from the official Muse Asia and Muse PH YouTube channels. These use the channel’s own player, because the channels do not hand out video files. Some countries are blocked.</p>
 <div class="grid" id="g"></div>
 </main>
 
 <div class="ov" id="ov"><div class="box">
   <div class="top"><h2 id="t"></h2><button class="x" id="x" aria-label="Close">×</button></div>
   <div class="scr" id="s"></div>
-  <p class="tip">Episodes play one after another. Tap the playlist icon in the player to pick an episode. Black screen or “video unavailable”? The channel may block your country.</p>
-  <a class="btn" id="yt" target="_blank" rel="noopener">Open on YouTube ↗</a>
+  <p class="tip" id="tip"></p>
+  <a class="btn" id="yt" target="_blank" rel="noopener"></a>
 </div></div>
 
 <script>
+var D=[
+["Sintel (Blender open film, 2010)","https://archive.org/download/Sintel/sintel-2048-stereo_512kb.mp4","https://archive.org/details/Sintel","Creative Commons"],
+["Tears of Steel (Blender open film, 2012)","https://archive.org/download/Tears-of-Steel/tears_of_steel_720p.mp4","https://archive.org/details/Tears-of-Steel","Creative Commons"],
+["Elephants Dream (Blender open film, 2006)","https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4","https://archive.org/details/ElephantsDream","Creative Commons"],
+["Superman: The Mad Scientist (1941)","https://archive.org/download/superman_1941/superman_1941_512kb.mp4","https://archive.org/details/superman_1941","Public domain (US)"],
+["Superman: The Mechanical Monsters (1941)","https://archive.org/download/Superman_Mechanical-Monsters/CARTOON-Superman_Mechanical-Monsters.mp4","https://archive.org/details/Superman_Mechanical-Monsters","Public domain (US)"],
+["Superman: The Arctic Giant (1942)","https://archive.org/download/superman_arctic_giant/arctic_giant.mp4","https://archive.org/details/superman_arctic_giant","Public domain (US)"]
+];
 var S=[
 ["One Punch Man","PLwLSw1_eDZl2XdtLhB9NG2Ch050jWFm9G",0],
 ["SPY x FAMILY (English subtitles)","PLwLSw1_eDZl29jJI3xLiviArPPoyC7EQp",0],
@@ -65,19 +79,28 @@ var S=[
 var $=function(i){return document.getElementById(i)};
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function hue(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))%360;return h}
-$("g").innerHTML=S.map(function(x,i){var h=hue(x[0]);
-  return'<button data-i="'+i+'"><div class="poster" style="background:linear-gradient(160deg,hsl('+h+',70%,50%),hsl('+((h+50)%360)+',65%,22%))">'+(x[2]?'<i class="m">18+</i>':'')+'<i>Free</i>'+esc(x[0])+'</div><small>Full series · ~24 min episodes</small></button>'}).join("");
+function card(attr,i,name,badge,sub,m){var h=hue(name);
+  return'<button '+attr+'="'+i+'"><div class="poster" style="background:linear-gradient(160deg,hsl('+h+',70%,50%),hsl('+((h+50)%360)+',65%,22%))">'+(m?'<i class="m">18+</i>':'')+'<i>'+badge+'</i>'+esc(name)+'</div><small>'+sub+'</small></button>'}
+$("d").innerHTML=D.map(function(x,i){return card("data-d",i,x[0],"Free",x[3])}).join("");
+$("g").innerHTML=S.map(function(x,i){return card("data-i",i,x[0],"Free","Full series · ~24 min episodes",x[2])}).join("");
 var adult=false;
+function open(title,html,tip,link,label){
+  $("t").textContent=title;$("s").innerHTML=html;$("tip").textContent=tip;
+  $("yt").href=link;$("yt").textContent=label;$("ov").classList.add("on")}
+$("d").onclick=function(e){
+  var b=e.target.closest("[data-d]");if(!b)return;
+  var x=D[+b.dataset.d];
+  open(x[0],'<video id="v" controls autoplay playsinline src="'+esc(x[1])+'"></video>',"Licence: "+x[3]+". Playing in our own player.",x[2],"Source page on Internet Archive ↗");
+  $("v").onerror=function(){$("s").innerHTML='<span>This video could not load right now. Try again later or open the source page below.</span>'}};
 $("g").onclick=function(e){
   var b=e.target.closest("[data-i]");if(!b)return;
   var x=S[+b.dataset.i];
   if(x[2]&&!adult){if(!confirm("This series contains violence and mature themes. Are you 18 or older?"))return;adult=true}
-  $("t").textContent=x[0];
-  $("s").innerHTML='<iframe src="https://www.youtube-nocookie.com/embed/videoseries?list='+encodeURIComponent(x[1])+'&autoplay=1&rel=0" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen title="'+esc(x[0])+'"></iframe>';
-  $("yt").href="https://www.youtube.com/playlist?list="+encodeURIComponent(x[1]);
-  $("ov").classList.add("on")};
-function close(){$("s").innerHTML="";$("ov").classList.remove("on")}
-$("x").onclick=close;$("ov").onclick=function(e){if(e.target==this)close()};
+  open(x[0],'<iframe src="https://www.youtube-nocookie.com/embed/videoseries?list='+encodeURIComponent(x[1])+'&autoplay=1&rel=0" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen title="'+esc(x[0])+'"></iframe>',
+    "Episodes play one after another. Black screen or “video unavailable”? The channel may block your country.",
+    "https://www.youtube.com/playlist?list="+encodeURIComponent(x[1]),"Open on YouTube ↗")};
+function shut(){$("s").innerHTML="";$("ov").classList.remove("on")}
+$("x").onclick=shut;$("ov").onclick=function(e){if(e.target==this)shut()};
 </script>
 </body>
 </html>
