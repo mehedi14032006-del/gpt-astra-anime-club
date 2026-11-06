@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Watch free anime – Kitsune+</title>
+<style>
+:root{--bg:#0b0914;--surf:#1d1636;--surf2:#2a2048;--tx:#f5f1ff;--mut:#a79fc4;--pink:#ff5c8a;--gold:#f6c453;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 "Plus Jakarta Sans","Avenir Next",system-ui,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid #352b5c;position:sticky;top:0;background:#0b0914ee;backdrop-filter:blur(8px);z-index:5}
+.logo{font-weight:800;font-size:20px}.logo b{color:var(--pink)}
+a{color:var(--gold)}
+main{padding:18px;max-width:1100px;margin:0 auto}
+h1{font-size:clamp(24px,5vw,38px);margin:8px 0}
+p.n{color:var(--mut);margin:0 0 18px;max-width:640px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;text-align:left;padding:0}
+.poster{height:210px;border-radius:12px;display:flex;align-items:flex-end;padding:12px;font-weight:800;line-height:1.2;text-shadow:0 1px 6px #000a;position:relative;transition:transform .2s}
+button:hover .poster{transform:translateY(-4px)}
+.poster i{position:absolute;top:8px;right:8px;font-style:normal;font-size:11px;background:var(--gold);color:#2a1d00;padding:2px 7px;border-radius:5px;font-weight:700;text-shadow:none}
+.poster i.m{left:8px;right:auto;background:var(--pink);color:#fff}
+small{display:block;color:var(--mut);margin-top:6px;font-size:13px}
+.ov{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;padding:12px;z-index:20}
+.ov.on{display:flex}
+.box{background:var(--surf);border-radius:16px;width:100%;max-width:900px;max-height:94vh;overflow:auto;padding:14px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.top h2{font-size:18px;margin:0}
+.x{font-size:24px;color:var(--mut);padding:4px 10px}
+.scr{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+.scr iframe{width:100%;height:100%;border:0}
+.tip{color:var(--mut);font-size:14px;margin:10px 0 0}
+.btn{display:inline-block;margin-top:10px;padding:10px 16px;border-radius:10px;background:var(--surf2);color:#fff;text-decoration:none;font-weight:700}
+</style>
+</head>
+<body>
+<header><span class="logo">Kitsune<b>+</b></span><a href="/">← Back to catalog</a></header>
+<main>
+<h1>Watch free full series</h1>
+<p class="n">Full episodes (about 24 minutes each) from the official Muse Asia and Muse PH YouTube channels. Tap a series, then use the player’s Next button to move to the next episode. Some countries are blocked by the channel.</p>
+<div class="grid" id="g"></div>
+</main>
+
+<div class="ov" id="ov"><div class="box">
+  <div class="top"><h2 id="t"></h2><button class="x" id="x" aria-label="Close">×</button></div>
+  <div class="scr" id="s"></div>
+  <p class="tip">Episodes play one after another. Tap the playlist icon in the player to pick an episode. Black screen or “video unavailable”? The channel may block your country.</p>
+  <a class="btn" id="yt" target="_blank" rel="noopener">Open on YouTube ↗</a>
+</div></div>
+
+<script>
+var S=[
+["One Punch Man","PLwLSw1_eDZl2XdtLhB9NG2Ch050jWFm9G",0],
+["SPY x FAMILY (English subtitles)","PLwLSw1_eDZl29jJI3xLiviArPPoyC7EQp",0],
+["SPY x FAMILY (English dub)","PLwLSw1_eDZl2K50osRye4kFgrJsbBTauM",0],
+["That Time I Got Reincarnated as a Slime","PLwLSw1_eDZl0eZktsDv3cu78EC0l2qYKI",0],
+["Wandering Witch: The Journey of Elaina","PLwLSw1_eDZl0t53wDaw_s7IFG7cNLp_BL",0],
+["Hyouka","PLwLSw1_eDZl28iypqyY3tsSz7P1BByLiK",0],
+["Mieruko-chan","PLwLSw1_eDZl17reRE_OPjNhFb-IgV1aYY",0],
+["Reborn!","PLwLSw1_eDZl0Hvvm1qpOoJRSOiJhj9nnl",0],
+["Magatsu Wahrheit: Zuerst","PLFyTtoGG2UkqVS2B9XszUqkKlQH9AFv9J",0],
+["Attack on Titan","PLwLSw1_eDZl1ntJ8Eq829QUYke_QGRNPF",1],
+["Re:ZERO Season 3","PLwLSw1_eDZl0mHfdQze0zVVrSRnLNr-yF",1]
+];
+var $=function(i){return document.getElementById(i)};
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function hue(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))%360;return h}
+$("g").innerHTML=S.map(function(x,i){var h=hue(x[0]);
+  return'<button data-i="'+i+'"><div class="poster" style="background:linear-gradient(160deg,hsl('+h+',70%,50%),hsl('+((h+50)%360)+',65%,22%))">'+(x[2]?'<i class="m">18+</i>':'')+'<i>Free</i>'+esc(x[0])+'</div><small>Full series · ~24 min episodes</small></button>'}).join("");
+var adult=false;
+$("g").onclick=function(e){
+  var b=e.target.closest("[data-i]");if(!b)return;
+  var x=S[+b.dataset.i];
+  if(x[2]&&!adult){if(!confirm("This series contains violence and mature themes. Are you 18 or older?"))return;adult=true}
+  $("t").textContent=x[0];
+  $("s").innerHTML='<iframe src="https://www.youtube-nocookie.com/embed/videoseries?list='+encodeURIComponent(x[1])+'&autoplay=1&rel=0" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen title="'+esc(x[0])+'"></iframe>';
+  $("yt").href="https://www.youtube.com/playlist?list="+encodeURIComponent(x[1]);
+  $("ov").classList.add("on")};
+function close(){$("s").innerHTML="";$("ov").classList.remove("on")}
+$("x").onclick=close;$("ov").onclick=function(e){if(e.target==this)close()};
+</script>
+</body>
+</html>
