@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Community – Kitsune+</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{--bg:#0b0914;--surf:#1d1636;--surf2:#2a2048;--tx:#f5f1ff;--mut:#a79fc4;--pink:#ff5c8a;--gold:#f6c453;--line:#352b5c;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 "Plus Jakarta Sans","Avenir Next",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0b0914ee;backdrop-filter:blur(8px);z-index:5}
+.logo{font-weight:800;font-size:20px;color:var(--tx);text-decoration:none}.logo b{color:var(--pink)}
+a{color:var(--gold)}
+.who{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:14px;color:var(--mut)}
+main{max-width:1100px;margin:0 auto;padding:16px 18px 80px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:0}
+.b{padding:9px 16px;border-radius:10px;background:var(--pink);color:#fff;font-weight:700}
+.b.g{background:var(--surf2)}
+input,select,textarea{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surf);width:100%}
+.tabs{display:flex;gap:8px;overflow-x:auto;margin:14px 0}
+.tabs button{flex:none;padding:8px 16px;border-radius:999px;background:none;border:1px solid var(--line);color:var(--mut)}
+.tabs button.on{background:var(--tx);color:var(--bg);border-color:var(--tx)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+.c{background:var(--surf);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.c img{width:100%;height:220px;object-fit:cover;display:block;background:var(--surf2)}
+.c .t{padding:10px;font-weight:700;font-size:14px;line-height:1.25}
+.c .m{padding:0 10px;color:var(--mut);font-size:12px}
+.c .a{display:flex;gap:6px;padding:10px}
+.c .a button{flex:1;padding:8px;border-radius:8px;background:var(--surf2);font-size:13px}
+.c .a button.on{background:var(--pink);color:#fff}
+.rp{padding:0 10px 12px;display:grid;gap:8px}
+.r{background:var(--surf);border-radius:12px;padding:12px;margin-bottom:10px}
+.r small{color:var(--mut)}
+.e{color:var(--mut);padding:10px 0}
+.box{max-width:420px;margin:30px auto;background:var(--surf);padding:18px;border-radius:14px;display:grid;gap:10px}
+#msg{color:var(--gold);min-height:22px;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">Kitsune<b>+</b></a>
+  <div class="who"><span id="me"></span><button class="b g" id="auth">Sign in</button></div>
+</header>
+<main>
+  <div class="box" id="login" hidden>
+    <b>Sign in or create an account</b>
+    <input id="em" type="email" placeholder="Email" autocomplete="email">
+    <input id="pw" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+    <div><button class="b" id="si">Sign in</button> <button class="b g" id="su">Create account</button></div>
+  </div>
+  <p id="msg" role="status"></p>
+  <input id="q" type="search" placeholder="Search anime to rate or favorite">
+  <div class="tabs" id="tabs"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+var URL_="https://deisgdxetikwkpxrgroz.supabase.co";
+var KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlaXNnZHhldGlrd2tweHJncm96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4Mjg0MTIsImV4cCI6MjEwNzQwNDQxMn0.BpYuT1D7Lc-YdPdTWzDNgM_TnUwo7mnNT-9uCtjeqyg";
+var sb=supabase.createClient(URL_,KEY);
+var API="https://api.jikan.moe/v4";
+var S={tab:"discover",q:"",user:null,role:"user",plan:"free",favs:{},mine:{},stats:{},open:null,cache:{},tok:0};
+var $=function(i){return document.getElementById(i)};
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+function say(t){$("msg").textContent=t||""}
+async function jget(p){for(var i=0;i<3;i++){try{var r=await fetch(API+p);if(r.status==429){await sleep(1200);continue}if(!r.ok)throw 0;return(await r.json()).data}catch(e){await sleep(700)}}return null}
+async function anime(id){
+  if(S.cache[id])return S.cache[id];
+  var d=await jget("/anime/"+id);if(d)S.cache[id]=d;return d}
+function keep(list){(list||[]).forEach(function(a){S.cache[a.mal_id]=a});return list||[]}
+
+async function loadUser(){
+  var r=await sb.auth.getSession();var u=r.data.session&&r.data.session.user;S.user=u||null;
+  S.favs={};S.mine={};S.role="user";S.plan="free";
+  if(u){
+    var p=await sb.from("profiles").select("role,subscription_tier").single();
+    if(p.data){S.role=p.data.role;S.plan=p.data.subscription_tier}
+    var f=await sb.from("favorites").select("mal_id");(f.data||[]).forEach(function(x){S.favs[x.mal_id]=1});
+    var m=await sb.from("anime_ratings").select("mal_id,score,review").eq("user_id",u.id);(m.data||[]).forEach(function(x){S.mine[x.mal_id]=x})}
+  $("me").textContent=u?(u.email+" · "+(S.plan=="premium"?"Premium":"Free")+(S.role=="admin"?" · Admin":"")):"";
+  $("auth").textContent=u?"Sign out":"Sign in";
+  tabs()}
+function tabs(){
+  var t=[["discover","Discover"],["favs","My favorites"],["mine","My ratings"],["reviews","Community reviews"]];
+  if(S.role=="admin")t.push(["admin","Moderation"]);
+  $("tabs").innerHTML=t.map(function(x){return'<button data-t="'+x[0]+'" class="'+(S.tab==x[0]?"on":"")+'">'+x[1]+'</button>'}).join("")}
+
+async function loadStats(ids){
+  if(!ids.length)return;
+  var r=await sb.from("anime_rating_stats").select("mal_id,avg_score,votes").in("mal_id",ids);
+  (r.data||[]).forEach(function(x){S.stats[x.mal_id]=x})}
+function card(a){
+  var id=a.mal_id,st=S.stats[id],my=S.mine[id],img=a.images&&a.images.jpg?a.images.jpg.large_image_url||a.images.jpg.image_url:"";
+  var h='<div class="c"><img loading="lazy" src="'+esc(img)+'" alt=""><div class="t">'+esc(a.title_english||a.title)+'</div>'
+   +'<div class="m">'+(a.score?'MAL ★ '+a.score+' · ':'')+(st?'Community ★ '+st.avg_score+' ('+st.votes+')':'No community ratings yet')+(my?' · You: '+my.score:'')+'</div>'
+   +'<div class="a"><button data-fav="'+id+'" class="'+(S.favs[id]?"on":"")+'">'+(S.favs[id]?"♥ Saved":"♡ Favorite")+'</button><button data-rate="'+id+'">'+(my?"Edit rating":"Rate")+'</button></div>';
+  if(S.open==id){
+    h+='<div class="rp"><select id="sc">'+[10,9,8,7,6,5,4,3,2,1].map(function(n){return'<option value="'+n+'"'+(my&&my.score==n?" selected":"")+'>'+n+' / 10</option>'}).join("")+'</select>'
+     +'<textarea id="rv" maxlength="2000" placeholder="Optional review (public)">'+esc(my&&my.review||"")+'</textarea>'
+     +'<button class="b" data-save="'+id+'">Save rating</button>'+(my?'<button class="b g" data-del="'+id+'">Remove my rating</button>':'')+'</div>'}
+  return h+'</div>'}
+async function draw(list){
+  await loadStats(list.map(function(a){return a.mal_id}));
+  $("out").innerHTML=list.length?'<div class="grid">'+list.map(card).join("")+'</div>':'<p class="e">Nothing here yet.</p>'}
+
+async function view(){
+  var my=++S.tok;say("");
+  if(S.tab=="discover"){
+    $("q").style.display="";
+    $("out").innerHTML='<p class="e">Loading...</p>';
+    var d=S.q?await jget("/anime?sfw=true&limit=20&order_by=popularity&q="+encodeURIComponent(S.q)):await jget("/top/anime?sfw=true&limit=20");
+    if(my!=S.tok)return;
+    if(d===null){$("out").innerHTML='<p class="e">Could not reach the anime catalog. Try again.</p>';return}
+    await draw(keep(d));return}
+  $("q").style.display="none";
+  if(S.tab!="admin"&&S.tab!="reviews"&&!S.user){$("out").innerHTML='<p class="e">Sign in to see this.</p>';return}
+  if(S.tab=="favs"||S.tab=="mine"){
+    var ids=Object.keys(S.tab=="favs"?S.favs:S.mine).slice(0,24);
+    if(!ids.length){$("out").innerHTML='<p class="e">Nothing here yet. Use Discover to add some.</p>';return}
+    $("out").innerHTML='<p class="e">Loading '+ids.length+' titles...</p>';
+    var got=[];for(var i=0;i<ids.length;i++){var a=await anime(ids[i]);if(my!=S.tok)return;if(a)got.push(a);if(!S.cache[ids[i]])await sleep(350)}
+    await draw(got);return}
+  if(S.tab=="reviews"){
+    var r=await sb.from("anime_ratings").select("user_id,mal_id,score,review,updated_at").not("review","is",null).order("updated_at",{ascending:false}).limit(12);
+    var rows=r.data||[];
+    if(!rows.length){$("out").innerHTML='<p class="e">No reviews yet. Be the first!</p>';return}
+    $("out").innerHTML=rows.map(function(x){return'<div class="r" id="rv-'+esc(x.user_id)+'-'+x.mal_id+'"><b id="t'+x.mal_id+'">Anime #'+x.mal_id+'</b> · ★ '+x.score+'/10<br>'+esc(x.review)+'<br><small>Fan '+esc(x.user_id.slice(0,4))+' · '+new Date(x.updated_at).toLocaleDateString()+'</small>'+(S.role=="admin"?' <button class="b g" data-rm="'+esc(x.user_id)+'|'+x.mal_id+'">Remove</button>':'')+'</div>'}).join("");
+    for(var k=0;k<rows.length;k++){var an=await anime(rows[k].mal_id);var el=$("t"+rows[k].mal_id);if(an&&el)el.textContent=an.title_english||an.title;if(!an)continue}
+    return}
+  if(S.tab=="admin"){
+    var q=await sb.from("content_reports").select("id,report_type,target,details,reporter_email,status,created_at").order("created_at",{ascending:false}).limit(30);
+    if(q.error){$("out").innerHTML='<p class="e">Could not load reports.</p>';return}
+    var list=q.data||[];
+    $("out").innerHTML=list.length?list.map(function(x){return'<div class="r"><b>'+esc(x.report_type)+'</b> · '+esc(x.status)+' · <small>'+new Date(x.created_at).toLocaleString()+'</small><br>Target: '+esc(x.target)+'<br>'+esc(x.details)+'<br><small>Reply to: '+esc(x.reporter_email||"not given")+'</small><br>'
+      +['reviewing','actioned','dismissed'].map(function(s){return'<button class="b g" data-rs="'+x.id+'|'+s+'">'+s+'</button> '}).join("")+'</div>'}).join(""):'<p class="e">No reports.</p>'}
+}
+
+document.addEventListener("click",async function(e){
+  var g=function(a){var n=e.target.closest("["+a+"]");return n?n.getAttribute(a):null};
+  var t=g("data-t");if(t){S.tab=t;S.open=null;tabs();view();return}
+  var f=g("data-fav");
+  if(f){
+    if(!S.user){$("login").hidden=false;say("Sign in to save favorites.");return}
+    var on=!!S.favs[f],r=on?await sb.from("favorites").delete().eq("mal_id",+f):await sb.from("favorites").insert({user_id:S.user.id,mal_id:+f});
+    if(r.error){say("Could not update favorites.");return}
+    if(on)delete S.favs[f];else S.favs[f]=1;view();return}
+  var rt=g("data-rate");
+  if(rt){if(!S.user){$("login").hidden=false;say("Sign in to rate.");return}S.open=S.open==rt?null:rt;view();return}
+  var sv=g("data-save");
+  if(sv){
+    var row={user_id:S.user.id,mal_id:+sv,score:+$("sc").value,review:$("rv").value.trim()||null};
+    var u=await sb.from("anime_ratings").upsert(row,{onConflict:"user_id,mal_id"});
+    if(u.error){say("Could not save your rating.");return}
+    S.mine[sv]={mal_id:+sv,score:row.score,review:row.review};delete S.stats[sv];S.open=null;say("Rating saved.");view();return}
+  var dl=g("data-del");
+  if(dl){var d=await sb.from("anime_ratings").delete().eq("mal_id",+dl).eq("user_id",S.user.id);if(d.error){say("Could not remove it.");return}delete S.mine[dl];delete S.stats[dl];S.open=null;say("Rating removed.");view();return}
+  var rm=g("data-rm");
+  if(rm){var p=rm.split("|");var x=await sb.from("anime_ratings").delete().eq("user_id",p[0]).eq("mal_id",+p[1]).select();if(x.error||!x.data||!x.data.length){say("Removal was not confirmed by the server.");return}say("Review removed.");view();return}
+  var rs=g("data-rs");
+  if(rs){var q=rs.split("|");var y=await sb.from("content_reports").update({status:q[1]}).eq("id",q[0]).select();if(y.error||!y.data||!y.data.length){say("Update was not confirmed by the server.");return}say("Report marked "+q[1]+".");view()}
+});
+var deb;
+$("q").oninput=function(e){S.q=e.target.value.trim();clearTimeout(deb);deb=setTimeout(view,600)};
+$("auth").onclick=async function(){if(S.user){await sb.auth.signOut();await loadUser();view()}else{$("login").hidden=!$("login").hidden}};
+async function go(up){
+  var c={email:$("em").value.trim(),password:$("pw").value};say("Working...");
+  var r=up?await sb.auth.signUp(c):await sb.auth.signInWithPassword(c);
+  if(r.error){say(r.error.message);return}
+  if(up&&!r.data.session){say("Check your email to confirm your account, then sign in.");return}
+  $("login").hidden=true;say("");await loadUser();view()}
+$("si").onclick=function(){go(false)};$("su").onclick=function(){go(true)};
+loadUser().then(view);
+</script>
+</body>
+</html>
