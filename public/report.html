@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Report content – Kitsune+</title><link rel="stylesheet" href="/legal.css"></head>
+<body>
+<header><a class="logo" href="/">Kitsune<b>+</b></a><nav><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/copyright.html">Copyright</a><a href="/report.html">Report</a></nav></header>
+<main>
+<h1>Report content</h1>
+<p class="m">Use this form for copyright notices, illegal links, age-inappropriate content, abuse, billing questions or data requests. We review every report.</p>
+<form id="f" autocomplete="off">
+<label for="tp">What are you reporting?</label>
+<select id="tp" required>
+<option value="copyright">Copyright (I own or represent the rights)</option>
+<option value="illegal_link">Illegal or unauthorized video link</option>
+<option value="age_inappropriate">Age-inappropriate content</option>
+<option value="abuse">Abuse or harassment</option>
+<option value="billing">Billing or cancellation</option>
+<option value="other">Other / data request</option>
+</select>
+<label for="tg">Page, title or link</label>
+<input id="tg" maxlength="500" required placeholder="For example: the page address or the anime title">
+<label for="dt">Details (at least 10 characters)</label>
+<textarea id="dt" maxlength="4000" required placeholder="Describe the problem. For copyright notices include the work you own and your good-faith statement."></textarea>
+<label for="em">Your email (so we can reply)</label>
+<input id="em" type="email" maxlength="200" placeholder="you@example.com">
+<input class="hp" id="hp" tabindex="-1" aria-hidden="true">
+<button id="b" type="submit">Send report</button>
+<p id="msg" role="status"></p>
+</form>
+</main>
+<script>
+var URL_="https://deisgdxetikwkpxrgroz.supabase.co/rest/v1/content_reports";
+var KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRlaXNnZHhldGlrd2tweHJncm96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4Mjg0MTIsImV4cCI6MjEwNzQwNDQxMn0.BpYuT1D7Lc-YdPdTWzDNgM_TnUwo7mnNT-9uCtjeqyg";
+var $=function(i){return document.getElementById(i)};
+$("f").onsubmit=async function(e){
+  e.preventDefault();
+  var m=$("msg");
+  if($("hp").value){m.textContent="Thank you. Your report was received.";return}
+  if($("dt").value.trim().length<10){m.textContent="Please add a few more details.";return}
+  $("b").disabled=true;m.textContent="Sending...";
+  var body={report_type:$("tp").value,target:$("tg").value.trim(),details:$("dt").value.trim(),reporter_email:$("em").value.trim()||null};
+  try{
+    var r=await fetch(URL_,{method:"POST",headers:{apikey:KEY,Authorization:"Bearer "+KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(body)});
+    if(!r.ok)throw 0;
+    m.textContent="Thank you. Your report was received and will be reviewed.";$("f").reset()
+  }catch(x){m.textContent="Sorry, the report could not be sent. Please try again later."}
+  $("b").disabled=false};
+</script>
+</body></html>

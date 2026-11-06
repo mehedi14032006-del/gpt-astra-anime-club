@@ -1,0 +1,16 @@
+:root{--bg:#0b0914;--surf:#1d1636;--tx:#f5f1ff;--mut:#b4acd0;--pink:#ff5c8a;--gold:#f6c453;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.65 "Plus Jakarta Sans","Avenir Next",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid #352b5c}
+.logo{font-weight:800;font-size:20px;color:var(--tx);text-decoration:none}.logo b{color:var(--pink)}
+nav a{color:var(--mut);margin-left:14px;font-size:14px;text-decoration:none}nav a:hover{color:var(--gold)}
+main{max-width:760px;margin:0 auto;padding:24px 18px 60px}
+h1{font-size:clamp(26px,6vw,38px);margin:0 0 4px}h2{font-size:20px;margin:28px 0 6px}
+p,li{color:#d6d0ea}a{color:var(--gold)}.m{color:var(--mut);font-size:14px}
+label{display:block;margin:14px 0 4px;font-weight:600}
+input,select,textarea{width:100%;padding:11px 12px;border-radius:10px;border:1px solid #352b5c;background:var(--surf);color:var(--tx);font:inherit}
+textarea{min-height:130px}
+button{margin-top:16px;padding:12px 22px;border:0;border-radius:10px;background:var(--pink);color:#fff;font:700 16px inherit;cursor:pointer}
+button:disabled{opacity:.6}
+.hp{position:absolute;left:-9999px}
+#msg{margin-top:14px;font-weight:600}
