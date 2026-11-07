@@ -138,49 +138,45 @@ describe('updateWatchProgress & formatTimestamp', () => {
 });
 
 describe('resolveEpisodeVideo (videoRegistry)', () => {
-  it('resolves distinct full-length videos for different episodes of the same anime', async () => {
+  it('keeps rights-unconfirmed copyrighted sources unavailable instead of returning a video', async () => {
     const { resolveEpisodeVideo } = await import('./videoRegistry.js');
-    const ep1 = await resolveEpisodeVideo({
-      anime: { id: '1572', title: 'Jungle Emperor Leo (1989)' },
-      seasonNumber: 1,
-      episodeNumber: 1
-    });
-    const ep2 = await resolveEpisodeVideo({
-      anime: { id: '1572', title: 'Jungle Emperor Leo (1989)' },
-      seasonNumber: 1,
-      episodeNumber: 2
-    });
+    const cases = [
+      { id: '1572', title: 'Jungle Emperor Leo (The New Adventures of Kimba)' },
+      { id: '2687', title: 'Shin Tetsujin 28-gō (The New Adventures of Gigantor)' }
+    ];
 
-    assert.equal(ep1.available, true);
-    assert.equal(ep2.available, true);
-    assert.equal(ep1.contentType, 'full_episode');
-    assert.ok(ep1.durationSeconds >= 1400);
-    assert.notEqual(ep1.streamUrl, ep2.streamUrl, 'Different episodes must have different video files!');
+    for (const anime of cases) {
+      const result = await resolveEpisodeVideo({
+        anime,
+        seasonNumber: 1,
+        episodeNumber: 1
+      });
+      assert.equal(result.available, false);
+      assert.equal(result.sourceStatus, 'source-unverified');
+      assert.equal(result.streamUrl, null);
+      assert.equal(result.embedUrl, null);
+      assert.equal(result.durationSeconds, null);
+    }
   });
 
-  it('resolves completely different full-length videos for different anime titles', async () => {
+  it('resolves distinct allow-listed sources only for exact, catalogued open-film entries', async () => {
     const { resolveEpisodeVideo } = await import('./videoRegistry.js');
-    const leo = await resolveEpisodeVideo({
-      anime: { id: '1572', title: 'Jungle Emperor Leo' },
-      seasonNumber: 1,
-      episodeNumber: 1
-    });
-    const tetsujin = await resolveEpisodeVideo({
-      anime: { id: '2687', title: 'Shin Tetsujin 28-go' },
-      seasonNumber: 1,
-      episodeNumber: 1
-    });
     const sintel = await resolveEpisodeVideo({
-      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel' },
+      anime: { id: 'sintel-dragon-chronicles', title: 'Sintel (Blender Open Animated Film)' },
+      seasonNumber: 1,
+      episodeNumber: 1
+    });
+    const tears = await resolveEpisodeVideo({
+      anime: { id: 'tears-of-steel', title: 'Tears of Steel (Mango Open Sci-Fi Film)' },
       seasonNumber: 1,
       episodeNumber: 1
     });
 
-    assert.ok(leo.streamUrl.includes('EnglishSubJungleEmperorLeo1989'));
-    assert.ok(tetsujin.streamUrl.includes('the-new-adventures-of-gigantor'));
+    assert.equal(sintel.available, true);
+    assert.equal(tears.available, true);
     assert.ok(sintel.streamUrl.toLowerCase().includes('sintel'));
-    assert.notEqual(leo.streamUrl, tetsujin.streamUrl);
-    assert.notEqual(tetsujin.streamUrl, sintel.streamUrl);
+    assert.ok(tears.streamUrl.toLowerCase().includes('tears'));
+    assert.notEqual(sintel.streamUrl, tears.streamUrl);
   });
 
   it('marks unhosted AniList anime as unavailable without playing another title video or auto-playing a trailer', async () => {
@@ -195,7 +191,7 @@ describe('resolveEpisodeVideo (videoRegistry)', () => {
     assert.equal(bokuNoPico.contentType, 'external_licensed_episode');
     assert.equal(bokuNoPico.streamUrl, null, 'Must NEVER return a fallback or another anime video!');
     assert.equal(bokuNoPico.embedUrl, null, 'Must NEVER assign a trailer embedUrl to an episode!');
-    assert.match(bokuNoPico.reason, /Promotional trailers are never substituted for full episodes/);
+    assert.match(bokuNoPico.reason, /Trailers are never substituted for full episodes/);
   });
 });
 
